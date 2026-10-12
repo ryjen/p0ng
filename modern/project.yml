@@ -18,6 +18,7 @@ targets:
         product: PongCore
     scheme:
       testTargets:
+        - p0ngUnitTests
         - p0ngUITests
     info:
       path: ModernApp/Info.plist
@@ -38,6 +39,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern.uitests
+        SWIFT_VERSION: '5.9'
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+
+  p0ngUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ModernAppTests
+    dependencies:
+      - target: p0ng
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern.tests
         SWIFT_VERSION: '5.9'
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic

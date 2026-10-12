@@ -1,5 +1,4 @@
 import SwiftUI
-import MultipeerConnectivity
 import PongCore
 
 @main
@@ -52,7 +51,7 @@ struct PongHomeView: View {
                         Text("Searching on your local network…")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(model.peers, id: \.self) { peer in
+                    ForEach(model.peers) { peer in
                         menuButton(peer.displayName) { model.join(peer) }
                     }
                 }

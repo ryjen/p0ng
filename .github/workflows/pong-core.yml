@@ -63,4 +63,4 @@ jobs:
             -destination "platform=iOS Simulator,id=$DEVICE_ID" \
             -derivedDataPath .derivedData -resultBundlePath "$UI_RESULTS" \
             -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO \
-            -only-testing:p0ngUITests/P0ngSmokeUITests test
+            -only-testing:p0ngUnitTests -only-testing:p0ngUITests/P0ngSmokeUITests test

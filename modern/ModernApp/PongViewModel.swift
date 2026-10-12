@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import QuartzCore
-import MultipeerConnectivity
 import PongCore
 
 /// Weak proxy breaks CADisplayLink's retain cycle with its target.
@@ -19,12 +18,12 @@ final class PongViewModel: ObservableObject {
         didSet { updateFrameActivity() }
     }
     @Published private(set) var state = PongSnapshot()
-    @Published private(set) var peers: [MCPeerID] = []
+    @Published private(set) var peers: [NearbyPeer] = []
     @Published var invitation: String?
     @Published var message: String?
 
     private var match = MatchCoordinator()
-    private let transport = NearbyTransport()
+    private let transport: GameTransport
     private let frameTarget = FrameTarget()
     private var displayLink: CADisplayLink?
     private var lastFrameTime: CFTimeInterval?
@@ -45,6 +44,7 @@ final class PongViewModel: ObservableObject {
     #endif
 
     var canRetryDiscovery: Bool { retryMode != nil }
+    var isDisplayClockRunning: Bool { displayLink?.isPaused == false }
     var isGuest: Bool { match.role == .guest }
     var isReady: Bool { match.ready }
     var roleLabel: String {
@@ -56,7 +56,8 @@ final class PongViewModel: ObservableObject {
         }
     }
 
-    init() {
+    init(transport: GameTransport = NearbyTransport()) {
+        self.transport = transport
         transport.onPeersChanged = { [weak self] peers in self?.peers = peers }
         transport.onInvitation = { [weak self] name in
             self?.invitationID = UUID()
@@ -244,7 +245,7 @@ final class PongViewModel: ObservableObject {
         transport.browse()
     }
 
-    func join(_ peer: MCPeerID) {
+    func join(_ peer: NearbyPeer) {
         guard screen == .browsing else { return }
         screen = .connecting
         let attempt = UUID()

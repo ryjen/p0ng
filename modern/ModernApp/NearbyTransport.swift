@@ -5,7 +5,7 @@ import PongCore
 
 /// LAN transport for exactly two players. Intentionally no third-party relay or account.
 /// Callbacks are delivered on the main queue for the SwiftUI coordinator.
-final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
+final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserDelegate,
                              MCNearbyServiceBrowserDelegate, MCSessionDelegate {
     private static let service = "p0ng-lan"
     // Avoid advertising the owner's device name (often personally identifying).
@@ -20,7 +20,7 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     private var selectedPeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
 
-    var onPeersChanged: (([MCPeerID]) -> Void)?
+    var onPeersChanged: (([NearbyPeer]) -> Void)?
     var onInvitation: ((String) -> Void)?
     var onConnected: (() -> Void)?
     var onDisconnected: ((String) -> Void)?
@@ -28,6 +28,14 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     var onError: ((String) -> Void)?
     var onDiscoveryFailed: ((String) -> Void)?
     private var discovered: [MCPeerID] = []
+    private var peerTokens: [MCPeerID: UUID] = [:]
+
+    private func publishedPeers() -> [NearbyPeer] {
+        discovered.compactMap { peer in
+            guard let id = peerTokens[peer] else { return nil }
+            return NearbyPeer(id: id, displayName: peer.displayName)
+        }
+    }
 
     func host() {
         stop()
@@ -50,11 +58,12 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
         browser.startBrowsingForPeers()
     }
 
-    func join(_ peer: MCPeerID) {
-        guard !hosting, !connected, selectedPeer == nil, discovered.contains(peer),
+    func join(_ peer: NearbyPeer) {
+        guard !hosting, !connected, selectedPeer == nil,
+              let actualPeer = discovered.first(where: { peerTokens[$0] == peer.id }),
               let browser, let session else { return }
-        selectedPeer = peer
-        browser.invitePeer(peer, to: session, withContext: nil, timeout: 20)
+        selectedPeer = actualPeer
+        browser.invitePeer(actualPeer, to: session, withContext: nil, timeout: 20)
     }
 
     func decideInvitation(accept: Bool) {
@@ -99,6 +108,7 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
         hosting = false
         connected = false
         discovered = []
+        peerTokens.removeAll()
         onPeersChanged?([])
     }
 
@@ -140,8 +150,11 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
                  withDiscoveryInfo info: [String: String]?) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.browser === browser else { return }
-            if !self.discovered.contains(peerID) { self.discovered.append(peerID) }
-            self.onPeersChanged?(self.discovered)
+            if !self.discovered.contains(peerID) {
+                self.discovered.append(peerID)
+                self.peerTokens[peerID] = UUID()
+            }
+            self.onPeersChanged?(self.publishedPeers())
         }
     }
 
@@ -149,7 +162,8 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
         DispatchQueue.main.async { [weak self] in
             guard let self, self.browser === browser else { return }
             self.discovered.removeAll { $0 == peerID }
-            self.onPeersChanged?(self.discovered)
+            self.peerTokens.removeValue(forKey: peerID)
+            self.onPeersChanged?(self.publishedPeers())
         }
     }
 

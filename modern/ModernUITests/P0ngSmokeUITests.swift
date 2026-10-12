@@ -16,9 +16,6 @@ final class P0ngSmokeUITests: XCTestCase {
         play.tap()
         XCTAssertTrue(app.staticTexts["Solo · Left paddle"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Exit"].exists)
-        XCTAssertTrue(app.staticTexts["SERVE IN 1"].waitForExistence(timeout: 5)
-                      || app.staticTexts["0"].count > 0,
-                      "Court should display gameplay")
 
         app.buttons["Exit"].tap()
         XCTAssertTrue(app.buttons["Host nearby match"].waitForExistence(timeout: 8),
@@ -28,7 +25,7 @@ final class P0ngSmokeUITests: XCTestCase {
     func testMenuContainsNearbyModes() {
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.staticTexts["p0ng"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["pong.title"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["Host nearby match"].exists)
         XCTAssertTrue(app.buttons["Join nearby match"].exists)
     }

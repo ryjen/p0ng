@@ -6,7 +6,7 @@ public struct MatchMessage: Codable, Equatable, Sendable {
     public static let protocolVersion = 1
 
     public enum Kind: String, Codable, Sendable {
-        case welcome, input, snapshot, leave
+        case hello, welcome, input, snapshot, leave
     }
 
     public var version: Int
@@ -77,8 +77,19 @@ public struct MatchCoordinator {
         self.frames = 0
     }
 
-    public mutating func peerConnected() -> OutgoingMessage? {
-        guard role == .host, let matchID else { return nil }
+    /// The guest sends hello only after its transport is connected, preventing
+    /// a host welcome from racing guest session establishment.
+    public func makeHello() -> OutgoingMessage? {
+        guard role == .guest, !ready, matchID == nil else { return nil }
+        return OutgoingMessage(packet: MatchMessage(kind: .hello, matchID: UUID(),
+                                                   sequence: 0), quality: .reliable)
+    }
+
+    public mutating func peerConnected(hello: MatchMessage) -> OutgoingMessage? {
+        guard role == .host, !ready, let matchID,
+              hello.version == MatchMessage.protocolVersion,
+              hello.kind == .hello, hello.sequence == 0,
+              hello.paddleY == nil, hello.state == nil else { return nil }
         ready = true
         return OutgoingMessage(packet: MatchMessage(kind: .welcome, matchID: matchID,
                                                    sequence: 0, state: game.snapshot),
@@ -86,7 +97,7 @@ public struct MatchCoordinator {
     }
 
     public mutating func setPaddle(_ y: Double, finished: Bool = false) -> OutgoingMessage? {
-        guard ready, y.isFinite, (0...1).contains(y) else { return nil }
+        guard ready, displayed.phase != .finished, y.isFinite, (0...1).contains(y) else { return nil }
         switch role {
         case .host, .solo:
             game.move(.left, to: y)

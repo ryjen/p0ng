@@ -29,7 +29,7 @@ final class PongViewModel: ObservableObject {
     private var frameStepper = FrameStepper()
     private var interpolation = SnapshotInterpolator()
     private var pendingInput = PaddleInputQueue()
-    private var localPaddleY: Double?
+    private var paddleReconciliation = PaddleReconciliation()
     private var connectionAttempt: UUID?
     private var lastHandshakeAt: TimeInterval = 0
     private var invitationID: UUID?
@@ -136,9 +136,9 @@ final class PongViewModel: ObservableObject {
 
     private func publish(_ snapshot: PongSnapshot) {
         var display = snapshot
-        if match.role == .guest, let y = localPaddleY {
-            // Never overwrite the finger position with a delayed host snapshot.
-            display.rightPaddleY = y
+        if match.role == .guest {
+            display.rightPaddleY = paddleReconciliation.render(
+                authoritative: display.rightPaddleY, at: CACurrentMediaTime())
         }
         if state != display { state = display }
     }
@@ -148,7 +148,7 @@ final class PongViewModel: ObservableObject {
         lastFrameTime = nil
         interpolation.reset()
         pendingInput.reset()
-        localPaddleY = nil
+        paddleReconciliation.reset()
     }
 
     /// Called directly on the main actor, once per native display refresh.
@@ -269,7 +269,8 @@ final class PongViewModel: ObservableObject {
         let position = min(1 - PongGame.paddleHeight / 2,
                            max(PongGame.paddleHeight / 2, y))
         if match.role == .guest {
-            localPaddleY = position
+            paddleReconciliation.update(y: position, finished: finished,
+                                        at: CACurrentMediaTime())
             pendingInput.offer(y: position, finished: finished)
             var display = state
             display.rightPaddleY = position

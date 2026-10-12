@@ -122,3 +122,41 @@ public struct SnapshotInterpolator {
         return history.last?.snapshot
     }
 }
+
+/// Fast local finger feedback without permanently hiding the authoritative
+/// paddle after finger-up. When corrections are needed, they ease in rather
+/// than teleporting the user's paddle. This affects rendering only.
+public struct PaddleReconciliation {
+    private var desiredY: Double?
+    private var releasedAt: Double?
+    public init() {}
+
+    public mutating func reset() {
+        desiredY = nil
+        releasedAt = nil
+    }
+
+    public mutating func update(y: Double, finished: Bool, at now: Double) {
+        guard y.isFinite, now.isFinite else { return }
+        desiredY = min(1, max(0, y))
+        releasedAt = finished ? now : nil
+    }
+
+    public mutating func render(authoritative: Double, at now: Double) -> Double {
+        guard let desiredY else { return authoritative }
+        guard let releasedAt else { return desiredY }
+        guard now.isFinite else { return desiredY }
+
+        let elapsed = max(0, now - releasedAt)
+        // Hold for two to three snapshots before beginning correction.
+        let factor = min(1, max(0, (elapsed - 0.15) / 0.35))
+        let blended = desiredY + (authoritative - desiredY) * factor
+        if factor >= 1 || (elapsed >= 0.15 && abs(desiredY - authoritative) < 0.001) {
+            self.desiredY = nil
+            self.releasedAt = nil
+            return authoritative
+        }
+        return blended
+    }
+}
+

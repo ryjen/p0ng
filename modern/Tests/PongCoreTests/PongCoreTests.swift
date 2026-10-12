@@ -421,3 +421,23 @@ extension PongCoreTests {
         XCTAssertNil(buffer.sample(at: 2))
     }
 }
+
+extension PongCoreTests {
+    func testLocalPaddleRemainsResponsiveButEventuallyReconciles() {
+        var prediction = PaddleReconciliation()
+        prediction.update(y: 0.8, finished: false, at: 1)
+        XCTAssertEqual(prediction.render(authoritative: 0.2, at: 1.1), 0.8)
+        prediction.update(y: 0.8, finished: true, at: 1.2)
+        XCTAssertEqual(prediction.render(authoritative: 0.2, at: 1.3), 0.8)
+        let midway = prediction.render(authoritative: 0.2, at: 1.525)
+        XCTAssertGreaterThan(midway, 0.2)
+        XCTAssertLessThan(midway, 0.8)
+        XCTAssertEqual(prediction.render(authoritative: 0.2, at: 1.8), 0.2)
+        XCTAssertEqual(prediction.render(authoritative: 0.4, at: 1.9), 0.4,
+                       "Local prediction must not persist after convergence")
+        prediction.update(y: 0.7, finished: false, at: 2)
+        prediction.reset()
+        XCTAssertEqual(prediction.render(authoritative: 0.5, at: 2.1), 0.5)
+    }
+}
+

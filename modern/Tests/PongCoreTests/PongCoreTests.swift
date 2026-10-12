@@ -7,7 +7,7 @@ final class PongCoreTests: XCTestCase {
         var guest = MatchCoordinator()
         host.startHosting()
         guest.startJoining()
-        let welcome = host.peerConnected()!.packet
+        let welcome = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
         XCTAssertTrue(guest.receive(welcome))
         let identifier = welcome.matchID
         var malicious = PongSnapshot()
@@ -22,7 +22,7 @@ final class PongCoreTests: XCTestCase {
         var guest = MatchCoordinator()
         host.startHosting()
         guest.startJoining()
-        XCTAssertTrue(guest.receive(host.peerConnected()!.packet))
+        XCTAssertTrue(guest.receive(host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet))
         let input = guest.setPaddle(0.87)!
         XCTAssertTrue(host.receive(input.packet))
         XCTAssertEqual(host.displayed.rightPaddleY, 0.87, accuracy: 0.0001)
@@ -36,7 +36,7 @@ final class PongCoreTests: XCTestCase {
     func testInvalidValuesAndForeignMatchRejected() {
         var host = MatchCoordinator()
         host.startHosting()
-        let id = host.peerConnected()!.packet.matchID
+        let id = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet.matchID
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: UUID(),
                                                 sequence: 1, paddleY: 0.4)))
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
@@ -85,11 +85,11 @@ extension PongCoreTests {
     func testHostRejectsGuestWelcomeAndStaleMatchAfterRestart() {
         var host = MatchCoordinator()
         host.startHosting()
-        let first = host.peerConnected()!.packet
+        let first = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
         XCTAssertFalse(host.receive(first))
         host.disconnect()
         host.startHosting()
-        let second = host.peerConnected()!.packet
+        let second = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
         XCTAssertNotEqual(first.matchID, second.matchID)
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: first.matchID,
                                                 sequence: 1, paddleY: 0.5)))
@@ -112,11 +112,42 @@ extension PongCoreTests {
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()
-        XCTAssertNil(solo.peerConnected())
+        XCTAssertNil(solo.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)))
         for _ in 0..<100 { XCTAssertNil(solo.tick()) }
         XCTAssertEqual(solo.displayed.phase, .playing)
         var host = MatchCoordinator()
         host.startHosting()
         XCTAssertNil(host.tick(), "Host waits for connection")
+    }
+}
+
+extension PongCoreTests {
+    func testHandshakeRequiresGuestHello() {
+        var host = MatchCoordinator()
+        var guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        XCTAssertNil(host.peerConnected(hello: MatchMessage(kind: .snapshot,
+                                                            matchID: UUID(), sequence: 0)))
+        XCTAssertNil(host.tick(), "Host must not simulate before guest hello")
+        let hello = guest.makeHello()!
+        XCTAssertEqual(hello.packet.kind, .hello)
+        XCTAssertEqual(hello.quality, .reliable)
+        let welcome = host.peerConnected(hello: hello.packet)!.packet
+        XCTAssertNil(host.peerConnected(hello: hello.packet), "Replay must not restart match")
+        XCTAssertTrue(guest.receive(welcome))
+        XCTAssertNil(guest.makeHello())
+    }
+
+    func testInvalidHelloDoesNotActivateHost() {
+        var host = MatchCoordinator()
+        host.startHosting()
+        var hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
+        hello.version = 999
+        XCTAssertNil(host.peerConnected(hello: hello))
+        hello.version = MatchMessage.protocolVersion
+        hello.paddleY = 0.5
+        XCTAssertNil(host.peerConnected(hello: hello))
+        XCTAssertFalse(host.ready)
     }
 }

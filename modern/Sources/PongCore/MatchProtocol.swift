@@ -3,10 +3,10 @@ import Foundation
 /// Stable application protocol. MCSession provides transport encryption; this adds
 /// explicit roles, protocol versioning, match identity and replay rejection.
 public struct MatchMessage: Codable, Equatable, Sendable {
-    public static let protocolVersion = 1
+    public static let protocolVersion = 2
 
     public enum Kind: String, Codable, Sendable {
-        case hello, welcome, input, snapshot, leave
+        case hello, welcome, ready, start, started, input, snapshot, leave
     }
 
     public var version: Int
@@ -36,6 +36,10 @@ public struct OutgoingMessage: Sendable {
 
 /// Single-writer simulation: host owns physics, scoring and match lifecycle.
 /// The guest may submit only right-paddle inputs and render host snapshots.
+/// The host is the sole simulation writer. A three-way start barrier prevents
+/// the host simulating before the guest has received the start message:
+/// hello -> welcome -> ready -> start -> started (acknowledgement).
+/// All handshake messages are reliable and can be repeated without restarting.
 public struct MatchCoordinator {
     public enum Role: Equatable { case idle, solo, host, guest }
     public private(set) var role: Role = .idle
@@ -48,6 +52,8 @@ public struct MatchCoordinator {
     private var lastInput: UInt64 = 0
     private var lastSnapshot: UInt64 = 0
     private var frames = 0
+    private var hostReceivedHello = false
+    private var hostSentStart = false
 
     public init() {}
 
@@ -75,26 +81,83 @@ public struct MatchCoordinator {
         self.lastInput = 0
         self.lastSnapshot = 0
         self.frames = 0
+        self.hostReceivedHello = false
+        self.hostSentStart = false
     }
 
-    /// The guest sends hello only after its transport is connected, preventing
-    /// a host welcome from racing guest session establishment.
-    public func makeHello() -> OutgoingMessage? {
-        guard role == .guest, !ready, matchID == nil else { return nil }
-        return OutgoingMessage(packet: MatchMessage(kind: .hello, matchID: UUID(),
-                                                   sequence: 0), quality: .reliable)
-    }
-
-    /// Repeated hello is idempotent: resend the same welcome if it was lost.
-    public mutating func peerConnected(hello: MatchMessage) -> OutgoingMessage? {
-        guard role == .host, let matchID,
-              hello.version == MatchMessage.protocolVersion,
-              hello.kind == .hello, hello.sequence == 0,
-              hello.paddleY == nil, hello.state == nil else { return nil }
-        ready = true
-        return OutgoingMessage(packet: MatchMessage(kind: .welcome, matchID: matchID,
-                                                   sequence: 0, state: game.snapshot),
+    private func response(_ kind: MatchMessage.Kind, state: PongSnapshot? = nil) -> OutgoingMessage? {
+        guard let matchID else { return nil }
+        return OutgoingMessage(packet: MatchMessage(kind: kind, matchID: matchID,
+                                                    sequence: 0, state: state),
                                quality: .reliable)
+    }
+
+    /// Retry at most once per second while connecting; never simulates a frame.
+    public func handshakeRetry() -> OutgoingMessage? {
+        guard !ready else { return nil }
+        switch role {
+        case .guest:
+            if matchID == nil {
+                return OutgoingMessage(packet: MatchMessage(kind: .hello,
+                                                            matchID: UUID(), sequence: 0),
+                                       quality: .reliable)
+            }
+            return response(.ready)
+        case .host:
+            guard hostReceivedHello else { return nil }
+            return hostSentStart ? response(.start) : response(.welcome, state: game.snapshot)
+        case .solo, .idle:
+            return nil
+        }
+    }
+
+    /// Returns whether a valid handshake message was applied and a possible
+    /// outbound acknowledgement. Replayed messages resend the same response.
+    public mutating func acceptHandshake(_ m: MatchMessage)
+        -> (accepted: Bool, response: OutgoingMessage?) {
+        guard m.version == MatchMessage.protocolVersion, m.sequence == 0,
+              m.paddleY == nil else { return (false, nil) }
+
+        switch role {
+        case .host:
+            guard let matchID else { return (false, nil) }
+            switch m.kind {
+            case .hello where m.state == nil && !ready:
+                hostReceivedHello = true
+                return (true, response(.welcome, state: game.snapshot))
+            case .ready where m.state == nil && m.matchID == matchID
+                                   && hostReceivedHello && !ready:
+                hostSentStart = true
+                return (true, response(.start))
+            case .started where m.state == nil && m.matchID == matchID
+                                     && hostSentStart:
+                ready = true
+                return (true, nil)
+            default: return (false, nil)
+            }
+        case .guest:
+            switch m.kind {
+            case .welcome:
+                guard !ready, let state = m.state, Self.valid(state) else {
+                    return (false, nil)
+                }
+                if matchID == nil {
+                    matchID = m.matchID
+                    displayed = state
+                } else if matchID != m.matchID {
+                    return (false, nil)
+                }
+                return (true, response(.ready))
+            case .start where m.state == nil && m.matchID == matchID:
+                // Even after joining the game, acknowledge repeated starts;
+                // this recovers from a dropped 'started' acknowledgement.
+                ready = true
+                return (true, response(.started))
+            default: return (false, nil)
+            }
+        case .solo, .idle:
+            return (false, nil)
+        }
     }
 
     public mutating func setPaddle(_ y: Double, finished: Bool = false) -> OutgoingMessage? {
@@ -116,7 +179,7 @@ public struct MatchCoordinator {
         }
     }
 
-    /// Call at a fixed 60 Hz. Host snapshots at 30 Hz, with reliable phase/score changes.
+    /// Call at a fixed 60 Hz. Host sends state at 30 Hz plus reliable phase changes.
     public mutating func tick() -> OutgoingMessage? {
         guard ready, role == .solo || role == .host,
               displayed.phase != .finished else { return nil }
@@ -135,7 +198,7 @@ public struct MatchCoordinator {
                                quality: critical ? .reliable : .realtime)
     }
 
-    /// Returns whether a valid message was applied. A guest may never send authoritative state.
+    /// A guest cannot send authoritative state; host-only messages are ignored by host.
     @discardableResult
     public mutating func receive(_ message: MatchMessage) -> Bool {
         guard message.version == MatchMessage.protocolVersion else { return false }
@@ -143,26 +206,15 @@ public struct MatchCoordinator {
         case .host:
             guard ready, game.snapshot.phase != .finished,
                   message.kind == .input, message.matchID == matchID,
-                  message.state == nil,
-                  message.sequence > lastInput,
+                  message.state == nil, message.sequence > lastInput,
                   let y = message.paddleY, y.isFinite, (0...1).contains(y) else { return false }
             lastInput = message.sequence
             game.move(.right, to: y)
             displayed = game.snapshot
             return true
         case .guest:
-            if message.kind == .welcome, !ready, matchID == nil,
-               message.paddleY == nil,
-               let state = message.state, Self.valid(state) {
-                matchID = message.matchID
-                displayed = state
-                ready = true
-                lastSnapshot = 0
-                return true
-            }
             guard ready, message.kind == .snapshot, message.matchID == matchID,
-                  message.sequence > lastSnapshot,
-                  message.paddleY == nil,
+                  message.sequence > lastSnapshot, message.paddleY == nil,
                   let state = message.state, Self.valid(state) else { return false }
             lastSnapshot = message.sequence
             displayed = state

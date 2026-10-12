@@ -1,0 +1,26 @@
+name: p0ng-modern
+options:
+  bundleIdPrefix: com.micrantha
+  deploymentTarget:
+    iOS: '17.0'
+packages:
+  PongCore:
+    path: .
+targets:
+  p0ng:
+    type: application
+    platform: iOS
+    sources:
+      - path: ModernApp
+        excludes: [Info.plist]
+    dependencies:
+      - package: PongCore
+        product: PongCore
+    info:
+      path: ModernApp/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern
+        SWIFT_VERSION: '5.9'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        CODE_SIGN_STYLE: Automatic

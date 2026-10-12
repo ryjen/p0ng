@@ -17,6 +17,7 @@ final class PongViewModel: ObservableObject {
     private let transport = NearbyTransport()
     private var timer: Timer?
     private var connectionAttempt: UUID?
+    private var lastHelloAt: TimeInterval = 0
 
     var isGuest: Bool { match.role == .guest }
     var isReady: Bool { match.ready }
@@ -35,7 +36,10 @@ final class PongViewModel: ObservableObject {
         transport.onError = { [weak self] problem in self?.message = problem }
         transport.onConnected = { [weak self] in
             guard let self else { return }
-            if let hello = self.match.makeHello() { self.transport.send(hello) }
+            if let hello = self.match.makeHello() {
+                self.transport.send(hello)
+                self.lastHelloAt = ProcessInfo.processInfo.systemUptime
+            }
             if self.match.role == .guest { self.screen = .connecting }
         }
         transport.onDisconnected = { [weak self] in
@@ -66,6 +70,15 @@ final class PongViewModel: ObservableObject {
     }
 
     private func tick() {
+        // Some MCSession delegates may deliver a packet before the host's
+        // connected callback reaches the main queue. Retry until welcomed.
+        if screen == .connecting, match.role == .guest, !match.ready, transport.connected {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastHelloAt >= 1.0 {
+                if let hello = match.makeHello() { transport.send(hello) }
+                lastHelloAt = now
+            }
+        }
         guard screen == .playing else { return }
         if let packet = match.tick() { transport.send(packet) }
         if match.role != .guest { state = match.displayed }

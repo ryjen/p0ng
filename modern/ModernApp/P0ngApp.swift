@@ -97,7 +97,7 @@ struct PongHomeView: View {
         .foregroundStyle(Retro.foreground)
         .alert("Join request", isPresented: Binding(
             get: { model.invitation != nil },
-            set: { if !$0 { model.respondToInvitation(false) } }
+            set: { if !$0 { model.dismissInvitationIfPending() } }
         )) {
             Button("Decline", role: .cancel) { model.respondToInvitation(false) }
             Button("Allow") { model.respondToInvitation(true) }
@@ -108,6 +108,9 @@ struct PongHomeView: View {
             get: { model.message != nil },
             set: { if !$0 { model.message = nil } }
         )) {
+            if model.canRetryDiscovery {
+                Button("Retry") { model.retryDiscovery() }
+            }
             Button("OK") { model.message = nil }
         } message: {
             Text(model.message ?? "")

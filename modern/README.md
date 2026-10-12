@@ -16,7 +16,7 @@ A third choice, **Play against computer**, works without a network.
 
 - Foundation-only `PongCore` module: normalized deterministic physics, single-writer multiplayer coordinator, JSON Codable wire protocol v1. Linux testable with `swift test`.
 - Native SwiftUI presentation: vector retro court, touch paddle, score/round state.
-- MultipeerConnectivity LAN transport: encrypted sessions, explicit host approval, two players maximum; host authoritative for ball, scoring, and phase. Guest sends only right-paddle input.
+- MultipeerConnectivity LAN transport: encrypted sessions, explicit host approval, two players maximum; host authoritative for ball, scoring, and phase. Guest sends a reliable hello after connecting; host replies with a reliable welcome before simulation begins. Guest then sends only right-paddle input.
 - Host snapshot stream at 30 Hz (unreliable) with reliable phase/score changes. Version, match UUID and monotonically increasing sequence numbers reject stale/replayed packets. Payloads limited to 4 KiB.
 - Disconnections invalidate current match. A new match requires user action rather than silently retaining old state.
 

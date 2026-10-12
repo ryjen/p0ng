@@ -85,7 +85,7 @@ final class PongViewModel: ObservableObject {
                 self.screen = .connecting
                 if let hello = self.match.handshakeRetry() { self.transport.send(hello) }
             }
-            self.lastHandshakeAt = ProcessInfo.processInfo.systemUptime
+            self.lastHandshakeAt = CACurrentMediaTime()
         }
         transport.onDisconnected = { [weak self] reason in
             guard let self else { return }
@@ -99,6 +99,7 @@ final class PongViewModel: ObservableObject {
         transport.onPacket = { [weak self] packet in
             guard let self else { return }
             let hadMatch = self.match.matchID != nil
+            let wasReady = self.match.ready
             let handshake = self.match.acceptHandshake(packet)
             if handshake.accepted {
                 if let response = handshake.response { self.transport.send(response) }
@@ -107,7 +108,7 @@ final class PongViewModel: ObservableObject {
                     self.interpolation.append(self.match.displayed, at: CACurrentMediaTime())
                 }
                 self.publish(self.match.displayed)
-                if self.match.ready {
+                if self.match.ready && !wasReady {
                     self.connectionAttempt = nil
                     self.frameStepper.reset()
                     self.lastFrameTime = nil

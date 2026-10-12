@@ -4,13 +4,14 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 
 ## Build gates
 
-- [x] Portable engine, protocol, and role-isolation tests (21 XCTest cases, Swift 6.2.1 / Linux)
+- [ ] Portable regression suite expanded to 25 XCTest cases for pacing, coalesced input, and interpolation (re-check exact-head CI before marking complete)
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
 - [ ] Hosted interactive iOS Simulator UI smoke (XCTest launch, solo play, exit, menu availability); check CI result before marking complete
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
+- [ ] Measure rendering frame gaps and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. CI cannot demonstrate measured responsiveness.
 
 ## Device acceptance matrix
 

@@ -17,7 +17,7 @@ A third choice, **Play against computer**, works without a network.
 - Foundation-only `PongCore` module: normalized deterministic physics, single-writer multiplayer coordinator, JSON Codable wire protocol v2. Linux testable with `swift test`.
 - Native SwiftUI presentation: vector retro court, touch paddle, score/round state.
 - MultipeerConnectivity LAN transport: encrypted sessions, explicit host approval, two players maximum; host authoritative for ball, scoring, and phase. Guest sends a reliable hello after connecting; host replies with a reliable welcome before simulation begins. Guest then sends only right-paddle input.
-- Host snapshot stream at 30 Hz (unreliable) with reliable phase/score changes. Version, match UUID and monotonically increasing sequence numbers reject stale/replayed packets. Payloads limited to 4 KiB.
+- Host snapshot stream at 30 Hz (unreliable) with reliable phase/score changes. Display-linked rendering interpolates buffered guest snapshots, keeps the local guest paddle responsive, and coalesces input to 30 Hz while sending finger release reliably. Version, match UUID and monotonically increasing sequence numbers reject stale/replayed packets. Payloads limited to 4 KiB.
 - Disconnections invalidate the current match. Discovery startup failures return to a retryable menu. Invitation decisions are explicit and idempotent.
 
 ## Verification
@@ -29,3 +29,7 @@ Run `swift test` for cross-platform protocol and physics tests. See `VALIDATION.
 This initial delivery supports local-area two-player matches, **not internet matchmaking or Game Center**. The guest displays authoritative snapshots at 30 Hz; interpolation/latency smoothing is a follow-up. At present the two-player match is all-or-nothing on disconnect. The historical `p0ng.xcodeproj` is not overwritten. Preserve its implementation and assets until device parity is confirmed.
 
 The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS Simulator (launch, solo mode, exit, menu). Simulator tests cannot establish that MultipeerConnectivity works between physical devices.
+
+## Performance candidate
+
+The active PR uses `CADisplayLink` for native display cadence instead of posting 60 new main-actor tasks per second. The host runs deterministic 60 Hz simulation in bounded catch-up steps. The guest interpolates render-only coordinates with a ~67 ms presentation delay; its own paddle is locally predicted, never used as authoritative ball/score state. Inputs are coalesced to 30 Hz and releases are reliable. These are hypotheses for better smoothness, **not measured improvements**; use two physical devices and compare frame/jitter metrics before claiming performance.

@@ -375,7 +375,7 @@ extension PongCoreTests {
         var queue = PaddleInputQueue()
         queue.offer(y: 0.2, finished: false)
         queue.offer(y: 0.8, finished: false)
-        XCTAssertEqual(queue.take(at: 1)?.y, 0.8, accuracy: 0.001)
+        XCTAssertEqual(queue.take(at: 1)!.y, 0.8, accuracy: 0.001)
         XCTAssertNil(queue.take(at: 1.01))
         queue.offer(y: 0.3, finished: false)
         XCTAssertNil(queue.take(at: 1.02))

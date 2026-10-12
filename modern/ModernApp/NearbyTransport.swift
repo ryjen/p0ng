@@ -247,10 +247,31 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         }
     }
 
+    /// p0ng's protocol has only bounded data packets. Streams and resource
+    /// transfers are outside the negotiated protocol and must never be accepted
+    /// merely because a peer joined an encrypted session.
+    private func rejectUnexpectedChannel(from source: MCSession) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.session === source else { return }
+            self.stop()
+            self.onDisconnected?("Match ended: unsupported network channel.")
+        }
+    }
+
     func session(_ session: MCSession, didReceive stream: InputStream,
-                 withName streamName: String, fromPeer peerID: MCPeerID) {}
+                 withName streamName: String, fromPeer peerID: MCPeerID) {
+        stream.close()
+        rejectUnexpectedChannel(from: session)
+    }
+
     func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String,
-                 fromPeer peerID: MCPeerID, with progress: Progress) {}
+                 fromPeer peerID: MCPeerID, with progress: Progress) {
+        progress.cancel()
+        rejectUnexpectedChannel(from: session)
+    }
+
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String,
-                 fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
+                 fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
+        rejectUnexpectedChannel(from: session)
+    }
 }

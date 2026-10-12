@@ -1,14 +1,14 @@
 # p0ng modernization: release qualification
 
-This is a candidate implementation. The Foundation game engine is verified on Linux and the SwiftUI app compiles for iOS Simulator on GitHub-hosted macOS. Build success is not proof that native app navigation or nearby matchmaking works at runtime. Physical-device multiplayer qualification remains required before release.
+This is an integration candidate. The Foundation game engine passes portable tests and two native iOS Simulator XCTest UI smoke cases pass on GitHub-hosted macOS. This verifies launch/solo/menu behavior, **not** nearby peer discovery or actual multiplayer responsiveness. Two physical devices and baseline/comparison performance measurements remain required before release.
 
 ## Build gates
 
-- [ ] Portable regression suite expanded to 25 XCTest cases for pacing, coalesced input, and interpolation (re-check exact-head CI before marking complete)
+- [x] 26 portable XCTest cases passed for game physics, handshake, pacing, input coalescing, interpolation, and paddle reconciliation ([performance candidate CI](https://github.com/ryjen/p0ng/actions/runs/38219041864))
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
-- [ ] Hosted interactive iOS Simulator UI smoke (XCTest launch, solo play, exit, menu availability); check CI result before marking complete
+- [x] Hosted iOS Simulator XCTest smoke passed (2 cases: launch/solo/exit and nearby-menu visibility) in the same workflow run
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 - [ ] Measure rendering frame gaps and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. CI cannot demonstrate measured responsiveness.

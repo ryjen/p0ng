@@ -214,3 +214,33 @@ public struct PacketIngressWindow {
         return true
     }
 }
+
+/// Bounded local frame-gap distribution. No peer identity, input data,
+/// network payload, or unbounded per-frame history is retained.
+public struct FrameTimingWindow {
+    private var gaps: [Double] = []
+    public let capacity: Int
+
+    public init(capacity: Int = 360) {
+        self.capacity = max(1, capacity)
+    }
+
+    public mutating func reset() { gaps.removeAll(keepingCapacity: true) }
+
+    public mutating func add(_ seconds: Double) {
+        guard seconds.isFinite, seconds > 0, seconds < 1 else { return }
+        if gaps.count == capacity { gaps.removeFirst() }
+        gaps.append(seconds)
+    }
+
+    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double)? {
+        guard !gaps.isEmpty else { return nil }
+        let sorted = gaps.sorted()
+        func quantile(_ fraction: Double) -> Double {
+            let index = max(0, Int(ceil(fraction * Double(sorted.count))) - 1)
+            return sorted[index] * 1000
+        }
+        return (quantile(0.5), quantile(0.95))
+    }
+}
+

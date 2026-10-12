@@ -97,7 +97,14 @@ struct PongHomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Retro.background)
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .background && model.screen != .menu { model.leave() }
+            switch newPhase {
+            case .active: model.setInteractive(true)
+            case .inactive: model.setInteractive(false)
+            case .background:
+                model.setInteractive(false)
+                if model.screen != .menu { model.leave() }
+            @unknown default: model.setInteractive(false)
+            }
         }
         .foregroundStyle(Retro.foreground)
         // One SwiftUI alert destination: invitation approval takes precedence

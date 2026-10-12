@@ -103,6 +103,23 @@ final class PongCoordinatorUnitTests: XCTestCase {
 }
 
 extension PongCoordinatorUnitTests {
+    func testInactiveScenePausesAndResumeAvoidsSimulationBurst() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.playSolo()
+        XCTAssertTrue(model.isDisplayClockRunning)
+        model.setInteractive(false)
+        XCTAssertFalse(model.isDisplayClockRunning)
+        XCTAssertEqual(model.screen, .playing, "Short interruption must not silently end a match")
+        model.setInteractive(true)
+        XCTAssertTrue(model.isDisplayClockRunning)
+        model.leave()
+        XCTAssertFalse(model.isDisplayClockRunning)
+        model.setInteractive(false)
+        model.setInteractive(true)
+        XCTAssertFalse(model.isDisplayClockRunning)
+    }
+
     func testLegacySoundResourcesArePackagedIntoModernApp() {
         XCTAssertNotNil(Bundle.main.url(forResource: "offthepaddle", withExtension: "wav"))
         XCTAssertNotNil(Bundle.main.url(forResource: "offthewall", withExtension: "wav"))

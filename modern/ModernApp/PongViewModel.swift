@@ -27,6 +27,7 @@ final class PongViewModel: ObservableObject {
     private let frameTarget = FrameTarget()
     private var displayLink: CADisplayLink?
     private var lastFrameTime: CFTimeInterval?
+    private var interactive = true
     private var frameStepper = FrameStepper()
     private var interpolation = SnapshotInterpolator()
     private var pendingInput = PaddleInputQueue()
@@ -42,6 +43,7 @@ final class PongViewModel: ObservableObject {
     private var debugDelayedFrames = 0
     private var debugSnapshotCount = 0
     private var debugLastReport: Double = 0
+    private var debugFrameTimes = FrameTimingWindow()
     #endif
 
     var canRetryDiscovery: Bool { retryMode != nil }
@@ -156,11 +158,22 @@ final class PongViewModel: ObservableObject {
     /// Keep the display clock dormant while browsing or waiting for a peer.
     /// A connected-but-not-ready session still needs one-second handshake retries.
     private func updateFrameActivity() {
-        let active = screen == .playing ||
-            (transport.connected && (screen == .hosting || screen == .connecting))
+        let active = interactive && (screen == .playing ||
+            (transport.connected && (screen == .hosting || screen == .connecting)))
         guard let link = displayLink, link.isPaused == active else { return }
         link.isPaused = !active
         lastFrameTime = nil // Resuming must not create catch-up simulation bursts.
+    }
+
+    /// Suspend frame-driven simulation while the app is temporarily inactive,
+    /// without treating a brief interruption as an immediate disconnection.
+    /// Returning to active always resets the timing baseline.
+    func setInteractive(_ value: Bool) {
+        guard interactive != value else { return }
+        interactive = value
+        lastFrameTime = nil
+        frameStepper.reset()
+        updateFrameActivity()
     }
 
     private func resetMotion() {
@@ -189,9 +202,12 @@ final class PongViewModel: ObservableObject {
         #if DEBUG
         debugFrameCount += 1
         if elapsed > 1.0 / 40.0 { debugDelayedFrames += 1 }
+        debugFrameTimes.add(elapsed)
         if now - debugLastReport >= 5 {
             // No identifiers or packet contents are logged.
-            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) discardedSimSeconds=\(frameStepper.discardedSeconds)")
+            let timing = debugFrameTimes.summary()
+            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) frameP50ms=\(timing?.p50Milliseconds ?? 0) frameP95ms=\(timing?.p95Milliseconds ?? 0) discardedSimSeconds=\(frameStepper.discardedSeconds)")
+            debugFrameTimes.reset()
             debugFrameCount = 0
             debugDelayedFrames = 0
             debugSnapshotCount = 0

@@ -13,7 +13,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 - [ ] Test VoiceOver adjustable paddle input, interrupted drags, and accessibility contrast on actual iOS devices.
-- [ ] Measure rendering frame gaps and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. CI cannot demonstrate measured responsiveness.
+- [ ] Measure DEBUG frame-gap p50/p95 and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. Local metrics code is implemented, but CI cannot demonstrate measured responsiveness.
 
 ## Device acceptance matrix
 

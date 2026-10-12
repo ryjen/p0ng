@@ -499,3 +499,21 @@ extension PongCoreTests {
         XCTAssertTrue(window.admit(at: 2.1))
     }
 }
+
+extension PongCoreTests {
+    func testFrameTimingPercentilesBoundedAndExcludeInvalidGaps() {
+        var timing = FrameTimingWindow(capacity: 4)
+        XCTAssertNil(timing.summary())
+        timing.add(Double.nan)
+        timing.add(-0.1)
+        timing.add(2)
+        for millis in [10.0, 20.0, 30.0, 40.0, 50.0] {
+            timing.add(millis / 1000)
+        }
+        XCTAssertEqual(timing.summary()!.p50Milliseconds, 30, accuracy: 0.001)
+        XCTAssertEqual(timing.summary()!.p95Milliseconds, 50, accuracy: 0.001)
+        timing.reset()
+        XCTAssertNil(timing.summary())
+    }
+}
+

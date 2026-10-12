@@ -15,12 +15,14 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     private var browser: MCNearbyServiceBrowser?
     private(set) var hosting = false
     private(set) var connected = false
-    private var pendingInvitation: ((Bool, MCSession?) -> Void)?
+    private var pendingInvitation: (peer: MCPeerID, handler: (Bool, MCSession?) -> Void)?
+    private var acceptedPeer: MCPeerID?
+    private var admission = NearbyAdmissionGate()
 
     var onPeersChanged: (([MCPeerID]) -> Void)?
     var onInvitation: ((String) -> Void)?
     var onConnected: (() -> Void)?
-    var onDisconnected: (() -> Void)?
+    var onDisconnected: ((String) -> Void)?
     var onPacket: ((MatchMessage) -> Void)?
     var onError: ((String) -> Void)?
     var onDiscoveryFailed: ((String) -> Void)?
@@ -56,7 +58,13 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     func decideInvitation(accept: Bool) {
         guard let pendingInvitation else { return }
         self.pendingInvitation = nil
-        pendingInvitation(accept, accept ? session : nil)
+        let allow = accept && hosting && session != nil
+        guard admission.resolve(accept: allow) else {
+            pendingInvitation.handler(false, nil)
+            return
+        }
+        if allow { acceptedPeer = pendingInvitation.peer }
+        pendingInvitation.handler(allow, allow ? session : nil)
     }
 
     func send(_ message: OutgoingMessage) {
@@ -78,8 +86,10 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
         browser?.stopBrowsingForPeers()
         browser?.delegate = nil
         browser = nil
-        pendingInvitation?(false, nil)
+        pendingInvitation?.handler(false, nil)
         pendingInvitation = nil
+        acceptedPeer = nil
+        admission.reset()
         session?.disconnect()
         session?.delegate = nil
         session = nil
@@ -101,12 +111,17 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
                     withContext context: Data?,
                     invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.hosting, !self.connected,
+            guard let self, self.advertiser === advertiser,
+                  self.hosting, !self.connected, self.acceptedPeer == nil,
                   self.pendingInvitation == nil, self.session != nil else {
                 invitationHandler(false, nil)
                 return
             }
-            self.pendingInvitation = invitationHandler
+            guard self.admission.offer() else {
+                invitationHandler(false, nil)
+                return
+            }
+            self.pendingInvitation = (peer: peerID, handler: invitationHandler)
             self.onInvitation?(peerID.displayName)
         }
     }
@@ -147,12 +162,16 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
             guard let self, self.session === session else { return }
             switch state {
             case .connected:
-                // Reject any extraneous peers: game protocol supports one remote player.
-                guard session.connectedPeers.count == 1 else {
+                // The approved peer is the only one allowed to join a host.
+                // Any abnormal shutdown also tears down the game's authority.
+                guard session.connectedPeers.count == 1,
+                      !self.hosting || (self.acceptedPeer == peerID &&
+                                       self.admission.didConnect()) else {
                     self.stop()
-                    self.onError?("Only two-player matches are supported")
+                    self.onDisconnected?("Match ended: unexpected peer connection.")
                     return
                 }
+                guard !self.connected else { return } // duplicate callback
                 self.connected = true
                 self.browser?.stopBrowsingForPeers()
                 self.advertiser?.stopAdvertisingPeer()
@@ -160,7 +179,11 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
             case .notConnected:
                 if self.connected {
                     self.connected = false
-                    self.onDisconnected?()
+                    self.onDisconnected?("Peer disconnected. Start another match to play again.")
+                } else if self.hosting, self.acceptedPeer == peerID {
+                    // An accepted invitation failed before connecting; keep hosting.
+                    self.acceptedPeer = nil
+                    self.admission.reset()
                 }
             case .connecting: break
             @unknown default: break

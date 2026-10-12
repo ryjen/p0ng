@@ -4,7 +4,7 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 
 ## Build gates
 
-- [x] Portable engine, protocol, and role-isolation tests (18 XCTest cases, Swift 6.2.1 / Linux)
+- [x] Portable engine, protocol, and role-isolation tests (21 XCTest cases, Swift 6.2.1 / Linux)
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
@@ -21,7 +21,7 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 5. Disconnect host and guest separately, change Wi-Fi networks, background the app, and disable networking; verify the game does not continue with stale authority. A new match must require a new invitation.
 6. Test iPhone/iPad mixed screen sizes and portrait/landscape, ensuring normalized court coordinates and input still agree.
 7. Test slow/lossy networks using Network Link Conditioner, especially phase transitions and stale-snapshot rejection. Measure snapshot jitter and dropped inputs.
-8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state. Verify discovery startup failure returns to retryable menu and alert acceptance cannot be consumed by automatic alert dismissal.
+8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state. Verify discovery startup failure returns to retryable menu, a single alert destination handles both invitations and network errors, and alert acceptance cannot be consumed by automatic dismissal. Verify multiple simultaneous invitations admit at most one peer, abnormal session termination resets game state, and callbacks queued before rehosting cannot authorize a new session.
 
 ## Security/operational notes
 

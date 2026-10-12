@@ -66,12 +66,12 @@ final class PongViewModel: ObservableObject {
             }
             self.lastHandshakeAt = ProcessInfo.processInfo.systemUptime
         }
-        transport.onDisconnected = { [weak self] in
+        transport.onDisconnected = { [weak self] reason in
             guard let self else { return }
             self.connectionAttempt = nil
             self.match.disconnect()
             self.screen = .menu
-            self.message = "Peer disconnected. Start another match to play again."
+            self.message = reason
             self.transport.stop()
         }
         transport.onPacket = { [weak self] packet in

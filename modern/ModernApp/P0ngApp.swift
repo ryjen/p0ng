@@ -95,25 +95,32 @@ struct PongHomeView: View {
             if newPhase == .background && model.screen != .menu { model.leave() }
         }
         .foregroundStyle(Retro.foreground)
-        .alert("Join request", isPresented: Binding(
-            get: { model.invitation != nil },
-            set: { if !$0 { model.dismissInvitationIfPending() } }
-        )) {
-            Button("Decline", role: .cancel) { model.respondToInvitation(false) }
-            Button("Allow") { model.respondToInvitation(true) }
-        } message: {
-            Text("Allow \(model.invitation ?? "this player") to join your match?")
-        }
-        .alert("Network", isPresented: Binding(
-            get: { model.message != nil },
-            set: { if !$0 { model.message = nil } }
-        )) {
-            if model.canRetryDiscovery {
-                Button("Retry") { model.retryDiscovery() }
+        // One SwiftUI alert destination: invitation approval takes precedence
+        // over a concurrent network error, instead of competing modifiers.
+        .alert(model.invitation != nil ? "Join request" : "Network",
+               isPresented: Binding(
+                get: { model.invitation != nil || model.message != nil },
+                set: { presented in
+                    guard !presented else { return }
+                    if model.invitation != nil { model.dismissInvitationIfPending() }
+                    else { model.message = nil }
+                }
+               )) {
+            if model.invitation != nil {
+                Button("Decline", role: .cancel) { model.respondToInvitation(false) }
+                Button("Allow") { model.respondToInvitation(true) }
+            } else {
+                if model.canRetryDiscovery {
+                    Button("Retry") { model.retryDiscovery() }
+                }
+                Button("OK", role: .cancel) { model.message = nil }
             }
-            Button("OK") { model.message = nil }
         } message: {
-            Text(model.message ?? "")
+            if let peer = model.invitation {
+                Text("Allow \(peer) to join your match?")
+            } else {
+                Text(model.message ?? "")
+            }
         }
     }
 

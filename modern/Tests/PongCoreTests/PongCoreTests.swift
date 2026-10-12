@@ -321,3 +321,39 @@ final class PongCoreTests: XCTestCase {
         XCTAssertEqual(first.snapshot, second.snapshot)
     }
 }
+
+extension PongCoreTests {
+    func testAdmissionAllowsOnlyOnePendingOrAcceptedInvitation() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertTrue(gate.offer())
+        XCTAssertFalse(gate.offer(), "Second invitation must be rejected while alert is open")
+        XCTAssertTrue(gate.resolve(accept: true))
+        XCTAssertFalse(gate.resolve(accept: true), "Decision is idempotent")
+        XCTAssertFalse(gate.offer(), "Do not admit a second peer before the first connects")
+        XCTAssertTrue(gate.didConnect())
+        XCTAssertFalse(gate.offer(), "Do not admit a third peer in an active match")
+        XCTAssertTrue(gate.didConnect(), "Duplicate connected callbacks are harmless")
+        gate.reset()
+        XCTAssertTrue(gate.offer(), "New hosting session can accept a player")
+    }
+
+    func testRejectedOrAbortedInvitationAllowsRetry() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertFalse(gate.resolve(accept: true))
+        XCTAssertTrue(gate.offer())
+        XCTAssertTrue(gate.resolve(accept: false))
+        XCTAssertTrue(gate.offer(), "Rejected invitation releases the slot")
+        XCTAssertTrue(gate.resolve(accept: true))
+        gate.reset() // Failed session before connection
+        XCTAssertTrue(gate.offer())
+    }
+
+    func testAdmissionCannotConnectWithoutAcceptance() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertFalse(gate.didConnect())
+        XCTAssertTrue(gate.offer())
+        XCTAssertFalse(gate.didConnect(), "Pending approval is not an accepted connection")
+        XCTAssertEqual(gate.state, .pending)
+    }
+}
+

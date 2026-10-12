@@ -154,3 +154,58 @@ extension PongCoreTests {
         XCTAssertFalse(host.ready)
     }
 }
+
+extension PongCoreTests {
+    func testHostStopsSnapshotsAndRejectsInputAfterFinish() {
+        var host = MatchCoordinator()
+        host.startHosting()
+        let hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
+        let id = host.peerConnected(hello: hello)!.packet.matchID
+        for _ in 0..<(60 * 300) {
+            if host.displayed.phase == .finished { break }
+            _ = host.tick()
+        }
+        XCTAssertEqual(host.displayed.phase, .finished, "Unopposed match should eventually finish")
+        XCTAssertNil(host.tick(), "Finished match must not transmit indefinitely")
+        XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
+                                                 sequence: 1, paddleY: 0.8)),
+                       "Inputs cannot alter a finished match")
+    }
+
+    func testUnexpectedPacketFieldsAreRejected() {
+        var host = MatchCoordinator()
+        host.startHosting()
+        let id = host.peerConnected(hello: MatchMessage(kind: .hello,
+                                                        matchID: UUID(), sequence: 0))!.packet.matchID
+        XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
+                                                 sequence: 1, paddleY: 0.5,
+                                                 state: PongSnapshot())))
+        XCTAssertTrue(host.receive(MatchMessage(kind: .input, matchID: id,
+                                                sequence: 1, paddleY: 0.5)))
+        var guest = MatchCoordinator()
+        guest.startJoining()
+        XCTAssertFalse(guest.receive(MatchMessage(kind: .welcome, matchID: id,
+                                                  sequence: 0, paddleY: 0.5,
+                                                  state: PongSnapshot())))
+        XCTAssertTrue(guest.receive(MatchMessage(kind: .welcome, matchID: id,
+                                                 sequence: 0, state: PongSnapshot())))
+        XCTAssertFalse(guest.receive(MatchMessage(kind: .snapshot, matchID: id,
+                                                  sequence: 1, paddleY: 0.5,
+                                                  state: PongSnapshot())))
+        XCTAssertTrue(guest.receive(MatchMessage(kind: .snapshot, matchID: id,
+                                                 sequence: 1, state: PongSnapshot())))
+    }
+
+    func testSameInputsProduceSamePhysics() {
+        var first = PongGame()
+        var second = PongGame()
+        for i in 0..<3000 {
+            let y = Double((i * 7) % 100) / 100
+            first.move(.left, to: y)
+            second.move(.left, to: y)
+            first.tick(1.0 / 60.0, againstComputer: true)
+            second.tick(1.0 / 60.0, againstComputer: true)
+        }
+        XCTAssertEqual(first.snapshot, second.snapshot)
+    }
+}

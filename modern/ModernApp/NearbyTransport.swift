@@ -23,6 +23,7 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     var onDisconnected: (() -> Void)?
     var onPacket: ((MatchMessage) -> Void)?
     var onError: ((String) -> Void)?
+    var onDiscoveryFailed: ((String) -> Void)?
     private var discovered: [MCPeerID] = []
 
     func host() {
@@ -111,7 +112,10 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     }
 
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
-        DispatchQueue.main.async { [weak self] in self?.onError?(error.localizedDescription) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.advertiser === advertiser else { return }
+            self.onDiscoveryFailed?(error.localizedDescription)
+        }
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID,
@@ -132,7 +136,10 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
-        DispatchQueue.main.async { [weak self] in self?.onError?(error.localizedDescription) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.browser === browser else { return }
+            self.onDiscoveryFailed?(error.localizedDescription)
+        }
     }
 
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {

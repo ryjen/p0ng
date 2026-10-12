@@ -4,15 +4,16 @@ This is an integration candidate. The Foundation game engine passes portable tes
 
 ## Build gates
 
-- [x] 33 portable XCTest cases passed at implementation commit `3362163`, including four deterministic delayed/lossy/reordered two-player integration tests ([Linux CI run](https://github.com/ryjen/p0ng/actions/runs/38315620257))
+- [x] 40 portable XCTest cases passed at candidate 1aaffbc: gameplay, deterministic network loss/reordering, frame timing, bounded stream frames and deterministic GameKit host election ([Actions run](https://github.com/ryjen/p0ng/actions/runs/38320299850)).
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
-- [x] Hosted iOS Simulator tests passed on previous validated head: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38227924445)); verify the latest documentation head separately.
+- [x] Prior iOS simulator qualification: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38315987240)).
+- [ ] Verify exact current head: 40 portable tests, iOS Simulator build, 6 native unit and 2 UI smoke cases.
 - [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
-- [ ] Test VoiceOver adjustable paddle input, interrupted drags, and accessibility contrast on actual iOS devices.
+- [ ] Test VoiceOver adjustable paddle input, interrupted drags, accessibility contrast, inactive interruption and foreground recovery on actual iOS devices.
 - [ ] Measure DEBUG frame-gap p50/p95 and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. Local metrics code is implemented, but CI cannot demonstrate measured responsiveness.
 
 ## Device acceptance matrix
@@ -29,7 +30,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 ## Security/operational notes
 
 - MCSession encryption is required but peer display names are not authenticated identities. Host approval is a consent gate, not cryptographic identity proof. This is sufficient for casual local play, not adversarial internet matchmaking.
-- Received wire payloads are capped at 4 KiB with a bounded 120-packets/second decoding budget; guest cannot author game ball, scores, or phase. Host remains the sole authority.
+- Active MCSession traffic is restricted to the accepted peer; failed reliable sends and unexpected streams/resources terminate the session. Wire payloads are capped at 4 KiB and 120 packets/second before JSON decode. Host is sole authority. Future Network.framework framed stream helpers do not authenticate or encrypt, and GameKit is not enabled.
 - The application deliberately does not advertise while a match is active.
 - Packet sequence and match UUID reject stale or duplicate packets but do not implement a reconnect/resume token. Disconnect means a new match.
 - Do not deploy a relay, cloud backend, Game Center entitlement, or analytics service for the LAN slice.

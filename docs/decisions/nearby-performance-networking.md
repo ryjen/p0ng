@@ -27,6 +27,14 @@ Two phones can pair without accounts or a relay and play Pong with immediate loc
 
 Apple's [TN3213: Moving from Multipeer Connectivity to Network framework](https://developer.apple.com/documentation/technotes/tn3213-moving-from-multipeer-connectivity-to-network-framework) was revised July 14, 2026; Apple's [custom peer-to-peer game sample](https://developer.apple.com/documentation/network/building-a-custom-peer-to-peer-protocol) demonstrates Bonjour and TLS on iOS/iPadOS.
 
+## Implemented prerequisites (not a live Network.framework adapter)
+
+- GameTransport isolates the app coordinator from peer framework types.
+- MCSession now pins its active accepted peer for sending and receiving; unexpected stream/resource channels and failed reliable sends terminate the session.
+- Portable MatchWireFraming implements 4 KiB length-delimited messages, bounded 16 KiB accumulation, split/coalesced streams and malformed-frame rejection.
+- This is only byte framing, not TLS, verified certificate identity or consent. A future NWConnection must close on framing errors.
+- The per-device identity and pairing UX remains a human decision logged in Todoist. A certificate-accept-all workaround is prohibited.
+
 ## Migration design and security boundaries
 
 1. Keep `PongCore` independent of any network implementation. Extract peer discovery, accept/decline, send, receive, disconnect and error semantics behind a minimal adapter with protocol-controlled state. Do not expose `MCPeerID` as the cross-transport identity.

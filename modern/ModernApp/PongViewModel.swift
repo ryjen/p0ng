@@ -16,6 +16,7 @@ final class PongViewModel: ObservableObject {
     private var match = MatchCoordinator()
     private let transport = NearbyTransport()
     private var timer: Timer?
+    private var connectionAttempt: UUID?
 
     var isGuest: Bool { match.role == .guest }
     var isReady: Bool { match.ready }
@@ -34,19 +35,26 @@ final class PongViewModel: ObservableObject {
         transport.onError = { [weak self] problem in self?.message = problem }
         transport.onConnected = { [weak self] in
             guard let self else { return }
-            if let welcome = self.match.peerConnected() { self.transport.send(welcome) }
-            if self.match.role == .host { self.screen = .playing }
-            else { self.screen = .connecting }
+            if let hello = self.match.makeHello() { self.transport.send(hello) }
+            if self.match.role == .guest { self.screen = .connecting }
         }
         transport.onDisconnected = { [weak self] in
             guard let self else { return }
+            self.connectionAttempt = nil
             self.match.disconnect()
             self.screen = .menu
             self.message = "Peer disconnected. Start another match to play again."
             self.transport.stop()
         }
         transport.onPacket = { [weak self] packet in
-            guard let self, self.match.receive(packet) else { return }
+            guard let self else { return }
+            if let welcome = self.match.peerConnected(hello: packet) {
+                self.transport.send(welcome)
+                self.screen = .playing
+                return
+            }
+            guard self.match.receive(packet) else { return }
+            self.connectionAttempt = nil
             self.state = self.match.displayed
             if self.match.ready { self.screen = .playing }
         }
@@ -64,6 +72,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func playSolo() {
+        connectionAttempt = nil
         transport.stop()
         match.startSolo()
         state = match.displayed
@@ -72,6 +81,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func host() {
+        connectionAttempt = nil
         transport.stop()
         match.startHosting()
         state = match.displayed
@@ -81,6 +91,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func browse() {
+        connectionAttempt = nil
         transport.stop()
         match.startJoining()
         state = match.displayed
@@ -92,10 +103,13 @@ final class PongViewModel: ObservableObject {
     func join(_ peer: MCPeerID) {
         guard screen == .browsing else { return }
         screen = .connecting
+        let attempt = UUID()
+        connectionAttempt = attempt
         transport.join(peer)
-        // A rejected or timed-out invitation must not strand the guest spinner.
+        // Ignore timeouts belonging to an earlier connection attempt.
         DispatchQueue.main.asyncAfter(deadline: .now() + 23) { [weak self] in
-            guard let self, self.screen == .connecting, !self.match.ready else { return }
+            guard let self, self.connectionAttempt == attempt,
+                  self.screen == .connecting, !self.match.ready else { return }
             self.browse()
             self.message = "Connection timed out. Select a nearby host to retry."
         }
@@ -115,6 +129,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func leave() {
+        connectionAttempt = nil
         transport.stop()
         match.disconnect()
         screen = .menu

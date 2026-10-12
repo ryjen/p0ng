@@ -33,3 +33,7 @@ The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS 
 ## Performance candidate
 
 The active PR uses `CADisplayLink` for native display cadence instead of posting 60 new main-actor tasks per second. The host runs deterministic 60 Hz simulation in bounded catch-up steps. The guest interpolates render-only coordinates with a ~67 ms presentation delay; its own paddle is locally predicted, never used as authoritative ball/score state. Inputs are coalesced to 30 Hz and releases are reliable. These are hypotheses for better smoothness, **not measured improvements**; use two physical devices and compare frame/jitter metrics before claiming performance.
+
+## Accessible input
+
+The court remains draggable and also exposes a VoiceOver adjustable paddle control (swipe up/down). Drag cancellation releases the pending input as a reliable final position, and leaving the match clears discovery state. This is source-level accessibility support; VoiceOver usability still needs device acceptance testing.

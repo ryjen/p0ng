@@ -149,6 +149,19 @@ struct CourtView: View {
     let playingRight: Bool
     let move: (Double, Bool) -> Void
 
+    @GestureState private var fingerDown = false
+    @State private var pendingPosition: Double?
+
+    private var localPaddle: Double {
+        playingRight ? snapshot.rightPaddleY : snapshot.leftPaddleY
+    }
+
+    private func releaseIfNeeded() {
+        guard let pendingPosition else { return }
+        self.pendingPosition = nil
+        move(pendingPosition, true)
+    }
+
     var body: some View {
         GeometryReader { geo in
             Canvas { context, size in
@@ -179,10 +192,27 @@ struct CourtView: View {
             .border(.white.opacity(0.8), width: 2)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { v in move(Double(v.location.y / max(geo.size.height, 1)), false) }
-                .onEnded { v in move(Double(v.location.y / max(geo.size.height, 1)), true) })
+                .updating($fingerDown) { _, active, _ in active = true }
+                .onChanged { v in
+                    let y = Double(v.location.y / max(geo.size.height, 1))
+                    pendingPosition = y
+                    move(y, false)
+                }
+                .onEnded { _ in releaseIfNeeded() })
+            .onChange(of: fingerDown) { oldValue, newValue in
+                if oldValue && !newValue { releaseIfNeeded() }
+            }
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(playingRight ? "Right paddle" : "Left paddle")
-            .accessibilityHint("Drag vertically to move your paddle")
+            .accessibilityValue("\(Int((localPaddle * 100).rounded())) percent court height")
+            .accessibilityHint("Drag vertically, or swipe up and down with VoiceOver to adjust")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: move(min(1 - PongGame.paddleHeight / 2, localPaddle + 0.06), true)
+                case .decrement: move(max(PongGame.paddleHeight / 2, localPaddle - 0.06), true)
+                @unknown default: break
+                }
+            }
         }
     }
 }

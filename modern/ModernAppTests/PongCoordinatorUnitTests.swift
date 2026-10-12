@@ -86,8 +86,8 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertFalse(model.isDisplayClockRunning)
         model.leave()
         XCTAssertEqual(model.screen, .menu)
-        XCTAssertTrue(model.peers.isEmpty == false,
-                      "Fake transport does not synthesize peer-clear callbacks")
+        XCTAssertTrue(model.peers.isEmpty,
+                      "Leaving must clear stale discovered peers even if transport callback is absent")
     }
 
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {

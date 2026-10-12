@@ -312,6 +312,7 @@ final class PongViewModel: ObservableObject {
         match.disconnect()
         resetMotion()
         screen = .menu
+        peers = []
         message = nil
         invitation = nil
     }

@@ -11,6 +11,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [x] Hosted iOS Simulator XCTest smoke passed (2 cases: launch/solo/exit and nearby-menu visibility) in the same workflow run
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
+- [ ] Test VoiceOver adjustable paddle input, interrupted drags, and accessibility contrast on actual iOS devices.
 - [ ] Measure rendering frame gaps and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. CI cannot demonstrate measured responsiveness.
 
 ## Device acceptance matrix

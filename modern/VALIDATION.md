@@ -14,7 +14,7 @@ This is a candidate implementation. The Foundation game engine is verified with 
 ## Device acceptance matrix
 
 1. Install on two devices on the same LAN; accept Local Network permission. Verify host appears in guest's discovered list.
-2. Guest selects host; host must explicitly accept. Reject then retry, and verify rejection does not start a game.
+2. Guest selects host; host must explicitly accept. Verify guest-initiated hello/welcome handshake, including delayed session-ready callbacks. Reject then retry, and verify rejection does not start a game.
 3. Verify host controls **left**, guest controls **right**; both screens show the same left/right positions, scores, serves, and final winner. Solo mode must retain right-hand computer paddle.
 4. Verify rapid dragging, paddle edge clamping, serves, scoring, and game-over on both devices.
 5. Disconnect host and guest separately, change Wi-Fi networks, background the app, and disable networking; verify the game does not continue with stale authority. A new match must require a new invitation.

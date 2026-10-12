@@ -31,6 +31,7 @@ final class PongViewModel: ObservableObject {
     private var interpolation = SnapshotInterpolator()
     private var pendingInput = PaddleInputQueue()
     private var paddleReconciliation = PaddleReconciliation()
+    private let feedback = GameFeedback()
     private var connectionAttempt: UUID?
     private var lastHandshakeAt: TimeInterval = 0
     private var invitationID: UUID?
@@ -78,6 +79,7 @@ final class PongViewModel: ObservableObject {
             self.invitation = nil
             self.invitationID = nil
             self.resetMotion()
+            self.feedback.reset()
             self.retryMode = mode
             self.screen = .menu
             self.message = "Nearby discovery failed: \(problem)"
@@ -96,6 +98,7 @@ final class PongViewModel: ObservableObject {
             self.connectionAttempt = nil
             self.match.disconnect()
             self.resetMotion()
+            self.feedback.reset()
             self.screen = .menu
             self.message = reason
             self.transport.stop()
@@ -113,6 +116,7 @@ final class PongViewModel: ObservableObject {
                 }
                 self.publish(self.match.displayed)
                 if self.match.ready && !wasReady {
+                    self.feedback.reset()
                     self.connectionAttempt = nil
                     self.frameStepper.reset()
                     self.lastFrameTime = nil
@@ -122,6 +126,7 @@ final class PongViewModel: ObservableObject {
             }
             guard self.match.receive(packet) else { return }
             if self.match.role == .guest {
+                self.feedback.observe(self.match.displayed)
                 self.interpolation.append(self.match.displayed, at: CACurrentMediaTime())
                 #if DEBUG
                 self.debugSnapshotCount += 1
@@ -204,6 +209,7 @@ final class PongViewModel: ObservableObject {
             var outgoing = SnapshotPacketBatch()
             for _ in 0..<frameStepper.advance(elapsed: elapsed) {
                 if let packet = match.tick() { outgoing.append(packet) }
+                feedback.observe(match.displayed)
             }
             for packet in outgoing.drain() { transport.send(packet) }
             publish(match.displayed)
@@ -216,6 +222,7 @@ final class PongViewModel: ObservableObject {
         transport.stop()
         match.startSolo()
         resetMotion()
+        feedback.reset()
         publish(match.displayed)
         screen = .playing
         message = nil
@@ -227,6 +234,7 @@ final class PongViewModel: ObservableObject {
         transport.stop()
         match.startHosting()
         resetMotion()
+        feedback.reset()
         publish(match.displayed)
         screen = .hosting
         message = nil
@@ -239,6 +247,7 @@ final class PongViewModel: ObservableObject {
         transport.stop()
         match.startJoining()
         resetMotion()
+        feedback.reset()
         publish(match.displayed)
         screen = .browsing
         message = nil
@@ -311,6 +320,7 @@ final class PongViewModel: ObservableObject {
         transport.stop()
         match.disconnect()
         resetMotion()
+        feedback.reset()
         screen = .menu
         peers = []
         message = nil

@@ -16,6 +16,8 @@ private enum Retro {
 
 struct PongHomeView: View {
     @StateObject private var model = PongViewModel()
+    @AppStorage("p0ng.soundEnabled") private var soundEnabled = true
+    @AppStorage("p0ng.hapticsEnabled") private var hapticsEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -38,6 +40,10 @@ struct PongHomeView: View {
                     menuButton("Play against computer", action: model.playSolo)
                     menuButton("Host nearby match", action: model.host)
                     menuButton("Join nearby match", action: model.browse)
+                    Toggle("Sound effects", isOn: $soundEnabled)
+                        .frame(maxWidth: 340)
+                    Toggle("Haptic feedback", isOn: $hapticsEnabled)
+                        .frame(maxWidth: 340)
                 }
                 .frame(maxHeight: .infinity)
             case .hosting:

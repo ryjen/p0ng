@@ -19,6 +19,16 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var acceptedPeer: MCPeerID?
     private var selectedPeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
+    private let ingressLock = NSLock()
+    private var ingressWindow = PacketIngressWindow()
+
+    /// MCSession delegates are delivered off-main. Limit decoding before
+    /// allocating messages and scheduling work onto the UI actor.
+    private func canDecodePacket() -> Bool {
+        ingressLock.lock()
+        defer { ingressLock.unlock() }
+        return ingressWindow.admit(at: ProcessInfo.processInfo.systemUptime)
+    }
 
     var onPeersChanged: (([NearbyPeer]) -> Void)?
     var onInvitation: ((String) -> Void)?
@@ -102,6 +112,9 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         acceptedPeer = nil
         selectedPeer = nil
         admission.reset()
+        ingressLock.lock()
+        ingressWindow.reset()
+        ingressLock.unlock()
         session?.disconnect()
         session?.delegate = nil
         session = nil
@@ -211,7 +224,8 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         // Reject oversized or unexpected messages before decoding or touching game state.
-        guard data.count <= 4096, let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
+        guard data.count <= 4096, canDecodePacket(),
+              let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.session === session,
                   self.connected, session.connectedPeers.contains(peerID) else { return }

@@ -101,3 +101,10 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertFalse(model.isReady)
     }
 }
+
+extension PongCoordinatorUnitTests {
+    func testLegacySoundResourcesArePackagedIntoModernApp() {
+        XCTAssertNotNil(Bundle.main.url(forResource: "offthepaddle", withExtension: "wav"))
+        XCTAssertNotNil(Bundle.main.url(forResource: "offthewall", withExtension: "wav"))
+    }
+}

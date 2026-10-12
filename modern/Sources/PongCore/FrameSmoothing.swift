@@ -187,3 +187,30 @@ public struct SnapshotPacketBatch {
     }
 }
 
+/// Bounds packet decoding work on the delegate queue. The window applies to
+/// received packets, regardless of their validity, and is reset per session.
+public struct PacketIngressWindow {
+    public let maxPerSecond: Int
+    private var startTime: Double?
+    private var accepted = 0
+
+    public init(maxPerSecond: Int = 120) {
+        self.maxPerSecond = max(1, maxPerSecond)
+    }
+
+    public mutating func reset() {
+        startTime = nil
+        accepted = 0
+    }
+
+    public mutating func admit(at now: Double) -> Bool {
+        guard now.isFinite else { return false }
+        if let startTime {
+            if now < startTime || now - startTime >= 1.0 { reset() }
+        }
+        if startTime == nil { startTime = now }
+        guard accepted < maxPerSecond else { return false }
+        accepted += 1
+        return true
+    }
+}

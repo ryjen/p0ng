@@ -37,3 +37,12 @@ The active PR uses `CADisplayLink` for native display cadence instead of posting
 ## Accessible input
 
 The court remains draggable and also exposes a VoiceOver adjustable paddle control (swipe up/down). Drag cancellation releases the pending input as a reliable final position, and leaving the match clears discovery state. This is source-level accessibility support; VoiceOver usability still needs device acceptance testing.
+
+## Native release polish
+
+The modern target packages the original 1024px iOS icon and paddle/wall sounds
+without modifying legacy resources. Sound effects and UIKit haptics are optional
+and default on; toggles persist through native AppStorage. An inbound 120-message/
+second decoding budget protects the main UI actor from excessive peer traffic.
+Neither the icon's App Store metadata nor in-person audio/haptic behavior is
+claimed release-qualified until physical-device verification.

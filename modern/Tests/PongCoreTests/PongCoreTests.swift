@@ -485,3 +485,17 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testIngressLimitBoundsTrafficAndResetsPerSession() {
+        var window = PacketIngressWindow(maxPerSecond: 3)
+        XCTAssertTrue(window.admit(at: 1))
+        XCTAssertTrue(window.admit(at: 1.1))
+        XCTAssertTrue(window.admit(at: 1.2))
+        XCTAssertFalse(window.admit(at: 1.21))
+        XCTAssertFalse(window.admit(at: .nan))
+        XCTAssertTrue(window.admit(at: 2))
+        XCTAssertTrue(window.admit(at: 2.1))
+        window.reset()
+        XCTAssertTrue(window.admit(at: 2.1))
+    }
+}

@@ -1,4 +1,4 @@
-name: PongCore portable tests
+name: p0ng validation
 
 on:
   pull_request:
@@ -26,3 +26,23 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Test PongCore
         run: swift test --package-path modern -j 2
+
+  ios-simulator-build:
+    name: iOS Simulator compile
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Generate project
+        working-directory: modern
+        run: xcodegen generate --spec project.yml
+      - name: Build for iOS Simulator
+        working-directory: modern
+        run: |
+          set -o pipefail
+          xcodebuild -project p0ng-modern.xcodeproj -scheme p0ng -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath .derivedData \
+            CODE_SIGNING_ALLOWED=NO build

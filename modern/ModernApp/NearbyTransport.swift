@@ -18,6 +18,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var pendingInvitation: (peer: MCPeerID, handler: (Bool, MCSession?) -> Void)?
     private var acceptedPeer: MCPeerID?
     private var selectedPeer: MCPeerID?
+    private var activePeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
     private let ingressLock = NSLock()
     private var ingressWindow = PacketIngressWindow()
@@ -89,14 +90,23 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     }
 
     func send(_ message: OutgoingMessage) {
-        guard connected, let session, !session.connectedPeers.isEmpty else { return }
+        guard connected, let session, let activePeer,
+              session.connectedPeers.count == 1,
+              session.connectedPeers.contains(activePeer) else { return }
         do {
             let encoded = try JSONEncoder().encode(message.packet)
             guard encoded.count <= 4096 else { return }
-            try session.send(encoded, toPeers: session.connectedPeers,
+            try session.send(encoded, toPeers: [activePeer],
                              with: message.quality == .reliable ? .reliable : .unreliable)
         } catch {
-            onError?("Network send failed: \(error.localizedDescription)")
+            if message.quality == .reliable {
+                // Never continue with apparently healthy game authority when
+                // a reliable score/handshake/control message cannot be sent.
+                stop()
+                onDisconnected?("Match ended: reliable network send failed.")
+            } else {
+                onError?("Realtime network packet dropped.")
+            }
         }
     }
 
@@ -111,6 +121,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         pendingInvitation = nil
         acceptedPeer = nil
         selectedPeer = nil
+        activePeer = nil
         admission.reset()
         ingressLock.lock()
         ingressWindow.reset()
@@ -204,11 +215,12 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 }
                 guard !self.connected else { return } // duplicate callback
                 self.connected = true
+                self.activePeer = peerID
                 self.browser?.stopBrowsingForPeers()
                 self.advertiser?.stopAdvertisingPeer()
                 self.onConnected?()
             case .notConnected:
-                if self.connected {
+                if self.connected, self.activePeer == peerID {
                     self.connected = false
                     self.onDisconnected?("Peer disconnected. Start another match to play again.")
                 } else if self.hosting, self.acceptedPeer == peerID {
@@ -228,7 +240,9 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
               let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.session === session,
-                  self.connected, session.connectedPeers.contains(peerID) else { return }
+                  self.connected, self.activePeer == peerID,
+                  session.connectedPeers.count == 1,
+                  session.connectedPeers.contains(peerID) else { return }
             self.onPacket?(message)
         }
     }

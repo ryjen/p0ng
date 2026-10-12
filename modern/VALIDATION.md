@@ -4,7 +4,7 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 
 ## Build gates
 
-- [x] Portable engine, protocol, and role-isolation tests (14 XCTest cases, Swift 6.2.1 / Linux)
+- [x] Portable engine, protocol, and role-isolation tests (18 XCTest cases, Swift 6.2.1 / Linux)
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
@@ -15,13 +15,13 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 ## Device acceptance matrix
 
 1. Install on two devices on the same LAN; accept Local Network permission. Verify host appears in guest's discovered list.
-2. Guest selects host; host must explicitly accept. Verify guest-initiated hello/welcome handshake, including delayed session-ready callbacks. Reject then retry, and verify rejection does not start a game.
+2. Guest selects host; host must explicitly accept. Verify protocol-v2 `hello → welcome → ready → start → started` handshake, with late callback delivery, rejection, retries, message loss and duplicate packets. Host simulation must remain stopped until `started` is acknowledged. Reject then retry, and verify rejection does not start a game.
 3. Verify host controls **left**, guest controls **right**; both screens show the same left/right positions, scores, serves, and final winner. Solo mode must retain right-hand computer paddle.
 4. Verify rapid dragging, paddle edge clamping, serves, scoring, and game-over on both devices.
 5. Disconnect host and guest separately, change Wi-Fi networks, background the app, and disable networking; verify the game does not continue with stale authority. A new match must require a new invitation.
 6. Test iPhone/iPad mixed screen sizes and portrait/landscape, ensuring normalized court coordinates and input still agree.
 7. Test slow/lossy networks using Network Link Conditioner, especially phase transitions and stale-snapshot rejection. Measure snapshot jitter and dropped inputs.
-8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state.
+8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state. Verify discovery startup failure returns to retryable menu and alert acceptance cannot be consumed by automatic alert dismissal.
 
 ## Security/operational notes
 

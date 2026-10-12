@@ -160,3 +160,30 @@ public struct PaddleReconciliation {
     }
 }
 
+/// Flushes only the newest replaceable snapshot per rendering frame while
+/// preserving reliable score and phase transitions produced during catch-up.
+/// The host remains authoritative; this is purely transport backpressure.
+public struct SnapshotPacketBatch {
+    private var critical: [OutgoingMessage] = []
+    private var latestRealtime: OutgoingMessage?
+
+    public init() {}
+
+    public mutating func append(_ packet: OutgoingMessage) {
+        switch packet.quality {
+        case .reliable:
+            critical.append(packet)
+        case .realtime:
+            latestRealtime = packet
+        }
+    }
+
+    public mutating func drain() -> [OutgoingMessage] {
+        var result = critical
+        if let latestRealtime { result.append(latestRealtime) }
+        critical.removeAll(keepingCapacity: true)
+        latestRealtime = nil
+        return result
+    }
+}
+

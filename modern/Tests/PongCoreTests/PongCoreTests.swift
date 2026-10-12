@@ -441,3 +441,47 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testCatchupSnapshotBatchDropsOutdatedRealtimePackets() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let welcome = host.acceptHandshake(guest.handshakeRetry()!.packet).response!.packet
+        let ready = guest.acceptHandshake(welcome).response!.packet
+        let start = host.acceptHandshake(ready).response!.packet
+        let started = guest.acceptHandshake(start).response!.packet
+        _ = host.acceptHandshake(started)
+
+        var batch = SnapshotPacketBatch()
+        for _ in 0..<6 {
+            if let emitted = host.tick() { batch.append(emitted) }
+        }
+        let outputs = batch.drain()
+        XCTAssertEqual(outputs.count, 1, "Three 30Hz snapshots should collapse to the latest")
+        XCTAssertEqual(outputs[0].packet.kind, .snapshot)
+        XCTAssertEqual(outputs[0].packet.sequence, 3)
+        XCTAssertTrue(guest.receive(outputs[0].packet))
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testCatchupSnapshotBatchPreservesCriticalScoreAndPhase() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(kind: .snapshot, matchID: id, sequence: 10,
+                                                          state: PongSnapshot()),
+                                     quality: .realtime))
+        batch.append(OutgoingMessage(packet: MatchMessage(kind: .snapshot, matchID: id, sequence: 11,
+                                                          state: PongSnapshot()),
+                                     quality: .reliable))
+        batch.append(OutgoingMessage(packet: MatchMessage(kind: .snapshot, matchID: id, sequence: 12,
+                                                          state: PongSnapshot()),
+                                     quality: .realtime))
+        batch.append(OutgoingMessage(packet: MatchMessage(kind: .snapshot, matchID: id, sequence: 13,
+                                                          state: PongSnapshot()),
+                                     quality: .realtime))
+        let messages = batch.drain()
+        XCTAssertEqual(messages.map { $0.packet.sequence }, [11, 13])
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+}
+

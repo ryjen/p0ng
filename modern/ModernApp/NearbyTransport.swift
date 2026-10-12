@@ -17,6 +17,7 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     private(set) var connected = false
     private var pendingInvitation: (peer: MCPeerID, handler: (Bool, MCSession?) -> Void)?
     private var acceptedPeer: MCPeerID?
+    private var selectedPeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
 
     var onPeersChanged: (([MCPeerID]) -> Void)?
@@ -50,8 +51,9 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
     }
 
     func join(_ peer: MCPeerID) {
-        guard !hosting, !connected, discovered.contains(peer),
+        guard !hosting, !connected, selectedPeer == nil, discovered.contains(peer),
               let browser, let session else { return }
+        selectedPeer = peer
         browser.invitePeer(peer, to: session, withContext: nil, timeout: 20)
     }
 
@@ -89,6 +91,7 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
         pendingInvitation?.handler(false, nil)
         pendingInvitation = nil
         acceptedPeer = nil
+        selectedPeer = nil
         admission.reset()
         session?.disconnect()
         session?.delegate = nil
@@ -165,8 +168,9 @@ final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
                 // The approved peer is the only one allowed to join a host.
                 // Any abnormal shutdown also tears down the game's authority.
                 guard session.connectedPeers.count == 1,
-                      !self.hosting || (self.acceptedPeer == peerID &&
-                                       self.admission.didConnect()) else {
+                      self.hosting
+                        ? (self.acceptedPeer == peerID && self.admission.didConnect())
+                        : (self.selectedPeer == peerID) else {
                     self.stop()
                     self.onDisconnected?("Match ended: unexpected peer connection.")
                     return

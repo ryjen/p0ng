@@ -15,7 +15,9 @@ private final class FrameTarget: NSObject {
 final class PongViewModel: ObservableObject {
     enum Screen { case menu, hosting, browsing, connecting, playing }
 
-    @Published private(set) var screen: Screen = .menu
+    @Published private(set) var screen: Screen = .menu {
+        didSet { updateFrameActivity() }
+    }
     @Published private(set) var state = PongSnapshot()
     @Published private(set) var peers: [MCPeerID] = []
     @Published var invitation: String?
@@ -81,6 +83,7 @@ final class PongViewModel: ObservableObject {
         }
         transport.onConnected = { [weak self] in
             guard let self else { return }
+            self.updateFrameActivity()
             if self.match.role == .guest {
                 self.screen = .connecting
                 if let hello = self.match.handshakeRetry() { self.transport.send(hello) }
@@ -131,6 +134,7 @@ final class PongViewModel: ObservableObject {
         let link = CADisplayLink(target: frameTarget, selector: #selector(FrameTarget.frame(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
         link.add(to: .main, forMode: .common)
+        link.isPaused = true
         displayLink = link
     }
 
@@ -141,6 +145,16 @@ final class PongViewModel: ObservableObject {
                 authoritative: display.rightPaddleY, at: CACurrentMediaTime())
         }
         if state != display { state = display }
+    }
+
+    /// Keep the display clock dormant while browsing or waiting for a peer.
+    /// A connected-but-not-ready session still needs one-second handshake retries.
+    private func updateFrameActivity() {
+        let active = screen == .playing ||
+            (transport.connected && (screen == .hosting || screen == .connecting))
+        guard let link = displayLink, link.isPaused == active else { return }
+        link.isPaused = !active
+        lastFrameTime = nil // Resuming must not create catch-up simulation bursts.
     }
 
     private func resetMotion() {
@@ -186,9 +200,11 @@ final class PongViewModel: ObservableObject {
             }
             publish(interpolation.sample(at: now) ?? match.displayed)
         } else {
+            var outgoing = SnapshotPacketBatch()
             for _ in 0..<frameStepper.advance(elapsed: elapsed) {
-                if let packet = match.tick() { transport.send(packet) }
+                if let packet = match.tick() { outgoing.append(packet) }
             }
+            for packet in outgoing.drain() { transport.send(packet) }
             publish(match.displayed)
         }
     }

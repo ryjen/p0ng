@@ -2,49 +2,225 @@ import XCTest
 @testable import PongCore
 
 final class PongCoreTests: XCTestCase {
-    func testGuestCannotAuthoritativelyChangeBallOrScore() {
-        var host = MatchCoordinator()
-        var guest = MatchCoordinator()
+    /// Complete a simulated, reliable five-message setup without a network stack.
+    @discardableResult
+    private func connect(_ host: inout MatchCoordinator,
+                         _ guest: inout MatchCoordinator) -> UUID {
         host.startHosting()
         guest.startJoining()
-        let welcome = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
-        XCTAssertTrue(guest.receive(welcome))
-        let identifier = welcome.matchID
+        let hello = guest.handshakeRetry()!
+        XCTAssertEqual(hello.packet.kind, .hello)
+        let welcome = host.acceptHandshake(hello.packet)
+        XCTAssertTrue(welcome.accepted)
+        XCTAssertEqual(welcome.response?.packet.kind, .welcome)
+        let prepared = guest.acceptHandshake(welcome.response!.packet)
+        XCTAssertTrue(prepared.accepted)
+        XCTAssertEqual(prepared.response?.packet.kind, .ready)
+        XCTAssertFalse(host.ready, "Host must remain stopped after welcome")
+        XCTAssertFalse(guest.ready, "Guest must remain stopped before start")
+        let start = host.acceptHandshake(prepared.response!.packet)
+        XCTAssertTrue(start.accepted)
+        XCTAssertEqual(start.response?.packet.kind, .start)
+        XCTAssertFalse(host.ready, "Sending start alone does not activate host")
+        let started = guest.acceptHandshake(start.response!.packet)
+        XCTAssertTrue(started.accepted)
+        XCTAssertEqual(started.response?.packet.kind, .started)
+        XCTAssertTrue(guest.ready)
+        XCTAssertFalse(host.ready, "Wait for acknowledgement from guest")
+        let acknowledged = host.acceptHandshake(started.response!.packet)
+        XCTAssertTrue(acknowledged.accepted)
+        XCTAssertNil(acknowledged.response)
+        XCTAssertTrue(host.ready)
+        return host.matchID!
+    }
+
+    func testStartBarrierBlocksHostAndGuestSimulation() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        XCTAssertNil(host.tick())
+        XCTAssertNil(guest.setPaddle(0.7))
+        let welcome = host.acceptHandshake(guest.handshakeRetry()!.packet).response!.packet
+        let ready = guest.acceptHandshake(welcome).response!.packet
+        XCTAssertFalse(host.ready)
+        XCTAssertFalse(guest.ready)
+        XCTAssertNil(host.tick())
+        XCTAssertNil(guest.setPaddle(0.7))
+        let start = host.acceptHandshake(ready).response!.packet
+        XCTAssertNil(host.tick(), "Host must wait for guest's final acknowledgement")
+        let started = guest.acceptHandshake(start).response!.packet
+        XCTAssertNil(host.tick(), "Guest starting is not evidence that ack was received")
+        XCTAssertTrue(host.acceptHandshake(started).accepted)
+        XCTAssertNotNil(host.tick() ?? host.tick())
+    }
+
+    func testHandshakeRetriesAreIdempotent() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let hello = guest.handshakeRetry()!.packet
+        let welcome = host.acceptHandshake(hello).response!.packet
+        XCTAssertEqual(host.handshakeRetry()?.packet, welcome)
+        XCTAssertEqual(host.acceptHandshake(hello).response?.packet, welcome)
+        let ready = guest.acceptHandshake(welcome).response!.packet
+        XCTAssertEqual(guest.handshakeRetry()?.packet, ready)
+        XCTAssertEqual(guest.acceptHandshake(welcome).response?.packet, ready)
+        let start = host.acceptHandshake(ready).response!.packet
+        XCTAssertEqual(host.handshakeRetry()?.packet, start)
+        XCTAssertEqual(host.acceptHandshake(ready).response?.packet, start)
+        let started = guest.acceptHandshake(start).response!.packet
+        XCTAssertTrue(guest.ready)
+        XCTAssertEqual(guest.acceptHandshake(start).response?.packet, started,
+                       "Lost acknowledgement must be recoverable with repeated start")
+        XCTAssertTrue(host.acceptHandshake(started).accepted)
+        XCTAssertTrue(host.ready)
+        XCTAssertNil(host.handshakeRetry())
+        XCTAssertNil(guest.handshakeRetry())
+        XCTAssertTrue(host.acceptHandshake(started).accepted, "Repeated ack is harmless")
+    }
+
+    func testLostWelcomeReadyAndStartRecoverByRetry() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let hello = guest.handshakeRetry()!.packet
+        _ = host.acceptHandshake(hello) // Drop initial welcome
+        XCTAssertNil(host.tick())
+        let welcome = host.handshakeRetry()!.packet
+        _ = guest.acceptHandshake(welcome) // Drop guest's initial ready
+        let ready = guest.handshakeRetry()!.packet
+        _ = host.acceptHandshake(ready) // Drop initial start
+        XCTAssertFalse(host.ready)
+        let start = host.handshakeRetry()!.packet
+        let started = guest.acceptHandshake(start).response!.packet
+        _ = host.acceptHandshake(started)
+        XCTAssertTrue(host.ready)
+        XCTAssertTrue(guest.ready)
+    }
+
+    func testHostRejectsPrematureAndForeignAcknowledgements() {
+        var host = MatchCoordinator()
+        host.startHosting()
+        let id = host.matchID!
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .ready, matchID: id,
+                                                         sequence: 0)).accepted)
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .started, matchID: id,
+                                                         sequence: 0)).accepted)
+        let hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
+        XCTAssertTrue(host.acceptHandshake(hello).accepted)
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .ready, matchID: UUID(),
+                                                         sequence: 0)).accepted)
+        XCTAssertTrue(host.acceptHandshake(MatchMessage(kind: .ready, matchID: id,
+                                                        sequence: 0)).accepted)
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .started, matchID: UUID(),
+                                                         sequence: 0)).accepted)
+        XCTAssertFalse(host.ready)
+        XCTAssertTrue(host.acceptHandshake(MatchMessage(kind: .started, matchID: id,
+                                                        sequence: 0)).accepted)
+        XCTAssertTrue(host.ready)
+    }
+
+    func testMalformedHandshakeMessagesRejected() {
+        var host = MatchCoordinator()
+        host.startHosting()
+        var hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
+        hello.version = 1
+        XCTAssertFalse(host.acceptHandshake(hello).accepted)
+        hello.version = MatchMessage.protocolVersion
+        hello.sequence = 1
+        XCTAssertFalse(host.acceptHandshake(hello).accepted)
+        hello.sequence = 0
+        hello.paddleY = 0.5
+        XCTAssertFalse(host.acceptHandshake(hello).accepted)
+        hello.paddleY = nil
+        hello.state = PongSnapshot()
+        XCTAssertFalse(host.acceptHandshake(hello).accepted)
+        hello.state = nil
+        XCTAssertTrue(host.acceptHandshake(hello).accepted)
+
+        var guest = MatchCoordinator()
+        guest.startJoining()
+        var bad = PongSnapshot()
+        bad.ballY = .infinity
+        let id = host.matchID!
+        XCTAssertFalse(guest.acceptHandshake(MatchMessage(kind: .welcome, matchID: id,
+                                                           sequence: 0, state: bad)).accepted)
+        XCTAssertFalse(guest.acceptHandshake(MatchMessage(kind: .welcome, matchID: id,
+                                                           sequence: 0, paddleY: 0.5,
+                                                           state: PongSnapshot())).accepted)
+        XCTAssertTrue(guest.acceptHandshake(MatchMessage(kind: .welcome, matchID: id,
+                                                          sequence: 0,
+                                                          state: PongSnapshot())).accepted)
+        XCTAssertFalse(guest.acceptHandshake(MatchMessage(kind: .start, matchID: UUID(),
+                                                           sequence: 0)).accepted)
+        XCTAssertFalse(guest.ready)
+    }
+
+    func testDisconnectResetsBothHandshakeStates() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let welcome = host.acceptHandshake(guest.handshakeRetry()!.packet).response!.packet
+        _ = guest.acceptHandshake(welcome)
+        host.disconnect()
+        guest.disconnect()
+        XCTAssertNil(host.handshakeRetry())
+        XCTAssertNil(guest.handshakeRetry())
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .ready,
+                                                         matchID: welcome.matchID,
+                                                         sequence: 0)).accepted)
+        XCTAssertFalse(guest.acceptHandshake(welcome).accepted)
+        host.startHosting()
+        XCTAssertNotEqual(host.matchID, welcome.matchID)
+    }
+
+    func testGuestCannotAuthoritativelyChangeBallOrScore() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
         var malicious = PongSnapshot()
         malicious.leftScore = 7
-        XCTAssertFalse(host.receive(MatchMessage(kind: .snapshot, matchID: identifier,
+        XCTAssertFalse(host.receive(MatchMessage(kind: .snapshot, matchID: id,
                                                  sequence: 999, state: malicious)))
         XCTAssertEqual(host.displayed.leftScore, 0)
     }
 
     func testHostInputAndSnapshotReplication() {
-        var host = MatchCoordinator()
-        var guest = MatchCoordinator()
-        host.startHosting()
-        guest.startJoining()
-        XCTAssertTrue(guest.receive(host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet))
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        connect(&host, &guest)
         let input = guest.setPaddle(0.87)!
         XCTAssertTrue(host.receive(input.packet))
         XCTAssertEqual(host.displayed.rightPaddleY, 0.87, accuracy: 0.0001)
-        XCTAssertFalse(host.receive(input.packet), "replayed input rejected")
+        XCTAssertFalse(host.receive(input.packet), "Replayed input must be rejected")
         let snapshot = host.tick() ?? host.tick()!
         XCTAssertTrue(guest.receive(snapshot.packet))
-        XCTAssertFalse(guest.receive(snapshot.packet), "replayed snapshot rejected")
+        XCTAssertFalse(guest.receive(snapshot.packet), "Replayed snapshot must be rejected")
         XCTAssertEqual(guest.displayed.rightPaddleY, host.displayed.rightPaddleY, accuracy: 0.0001)
     }
 
-    func testInvalidValuesAndForeignMatchRejected() {
-        var host = MatchCoordinator()
+    func testInputsAndSnapshotsRejectedBeforeMatchReady() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
         host.startHosting()
-        let id = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet.matchID
+        guest.startJoining()
+        let welcome = host.acceptHandshake(guest.handshakeRetry()!.packet).response!.packet
+        XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: welcome.matchID,
+                                                 sequence: 1, paddleY: 0.8)))
+        XCTAssertFalse(guest.receive(MatchMessage(kind: .snapshot, matchID: welcome.matchID,
+                                                  sequence: 1, state: PongSnapshot())))
+        _ = guest.acceptHandshake(welcome)
+        XCTAssertFalse(guest.ready)
+    }
+
+    func testInvalidValuesAndForeignMatchRejected() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: UUID(),
-                                                sequence: 1, paddleY: 0.4)))
+                                                 sequence: 1, paddleY: 0.4)))
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
-                                                sequence: 2, paddleY: .nan)))
+                                                 sequence: 2, paddleY: .nan)))
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
-                                                sequence: 3, paddleY: 10)))
+                                                 sequence: 3, paddleY: 10)))
         XCTAssertTrue(host.receive(MatchMessage(kind: .input, matchID: id,
-                                               sequence: 1, paddleY: 0.4)))
+                                                sequence: 1, paddleY: 0.4)))
         XCTAssertEqual(host.displayed.rightPaddleY, 0.4, accuracy: 0.0001)
     }
 
@@ -56,7 +232,8 @@ final class PongCoreTests: XCTestCase {
         XCTAssertEqual(game.snapshot.rightPaddleY, 1 - PongGame.paddleHeight / 2)
         for _ in 0..<60 * 30 { game.tick(1.0 / 60.0) }
         XCTAssertGreaterThan(game.snapshot.leftScore + game.snapshot.rightScore, 0)
-        XCTAssertLessThanOrEqual(max(game.snapshot.leftScore, game.snapshot.rightScore), PongGame.winningScore)
+        XCTAssertLessThanOrEqual(max(game.snapshot.leftScore, game.snapshot.rightScore),
+                                 PongGame.winningScore)
     }
 
     func testPacketRoundTrip() throws {
@@ -64,43 +241,26 @@ final class PongCoreTests: XCTestCase {
                                    state: PongSnapshot())
         let data = try JSONEncoder().encode(message)
         XCTAssertEqual(try JSONDecoder().decode(MatchMessage.self, from: data), message)
+        XCTAssertEqual(MatchMessage.protocolVersion, 2)
     }
 
-    func testVersionAndStaleWelcomeRejected() {
-        var guest = MatchCoordinator()
-        guest.startJoining()
-        var welcome = MatchMessage(kind: .welcome, matchID: UUID(), sequence: 0,
-                                   state: PongSnapshot())
-        welcome.version = 999
-        XCTAssertFalse(guest.receive(welcome))
-        welcome.version = MatchMessage.protocolVersion
-        XCTAssertTrue(guest.receive(welcome))
-        XCTAssertFalse(guest.receive(welcome))
-        guest.disconnect()
-        XCTAssertFalse(guest.receive(welcome))
-    }
-}
-
-extension PongCoreTests {
     func testHostRejectsGuestWelcomeAndStaleMatchAfterRestart() {
-        var host = MatchCoordinator()
-        host.startHosting()
-        let first = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
-        XCTAssertFalse(host.receive(first))
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let first = connect(&host, &guest)
+        XCTAssertFalse(host.acceptHandshake(MatchMessage(kind: .welcome,
+                                                         matchID: first, sequence: 0,
+                                                         state: PongSnapshot())).accepted)
         host.disconnect()
-        host.startHosting()
-        let second = host.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0))!.packet
-        XCTAssertNotEqual(first.matchID, second.matchID)
-        XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: first.matchID,
-                                                sequence: 1, paddleY: 0.5)))
+        var next = MatchCoordinator()
+        connect(&host, &next)
+        XCTAssertNotEqual(first, host.matchID)
+        XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: first,
+                                                 sequence: 1, paddleY: 0.5)))
     }
 
     func testGuestCannotApplyMalformedSnapshot() {
-        var guest = MatchCoordinator()
-        guest.startJoining()
-        let id = UUID()
-        XCTAssertTrue(guest.receive(MatchMessage(kind: .welcome, matchID: id,
-                                                 sequence: 0, state: PongSnapshot())))
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
         var bad = PongSnapshot()
         bad.ballY = .infinity
         XCTAssertFalse(guest.receive(MatchMessage(kind: .snapshot, matchID: id,
@@ -112,83 +272,36 @@ extension PongCoreTests {
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()
-        XCTAssertNil(solo.peerConnected(hello: MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)))
+        XCTAssertFalse(solo.acceptHandshake(MatchMessage(kind: .hello, matchID: UUID(),
+                                                          sequence: 0)).accepted)
         for _ in 0..<100 { XCTAssertNil(solo.tick()) }
         XCTAssertEqual(solo.displayed.phase, .playing)
         var host = MatchCoordinator()
         host.startHosting()
-        XCTAssertNil(host.tick(), "Host waits for connection")
-    }
-}
-
-extension PongCoreTests {
-    func testHandshakeRequiresGuestHello() {
-        var host = MatchCoordinator()
-        var guest = MatchCoordinator()
-        host.startHosting()
-        guest.startJoining()
-        XCTAssertNil(host.peerConnected(hello: MatchMessage(kind: .snapshot,
-                                                            matchID: UUID(), sequence: 0)))
-        XCTAssertNil(host.tick(), "Host must not simulate before guest hello")
-        let hello = guest.makeHello()!
-        XCTAssertEqual(hello.packet.kind, .hello)
-        XCTAssertEqual(hello.quality, .reliable)
-        let welcome = host.peerConnected(hello: hello.packet)!.packet
-        let resent = host.peerConnected(hello: hello.packet)
-        XCTAssertEqual(resent?.packet.matchID, welcome.matchID,
-                       "Retry must resend the same welcome without restarting match")
-        XCTAssertEqual(resent?.quality, .reliable)
-        XCTAssertTrue(guest.receive(welcome))
-        XCTAssertNil(guest.makeHello())
+        XCTAssertNil(host.tick(), "Host waits for acknowledged start")
     }
 
-    func testInvalidHelloDoesNotActivateHost() {
-        var host = MatchCoordinator()
-        host.startHosting()
-        var hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
-        hello.version = 999
-        XCTAssertNil(host.peerConnected(hello: hello))
-        hello.version = MatchMessage.protocolVersion
-        hello.paddleY = 0.5
-        XCTAssertNil(host.peerConnected(hello: hello))
-        XCTAssertFalse(host.ready)
-    }
-}
-
-extension PongCoreTests {
     func testHostStopsSnapshotsAndRejectsInputAfterFinish() {
-        var host = MatchCoordinator()
-        host.startHosting()
-        let hello = MatchMessage(kind: .hello, matchID: UUID(), sequence: 0)
-        let id = host.peerConnected(hello: hello)!.packet.matchID
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
         for _ in 0..<(60 * 300) {
             if host.displayed.phase == .finished { break }
             _ = host.tick()
         }
-        XCTAssertEqual(host.displayed.phase, .finished, "Unopposed match should eventually finish")
-        XCTAssertNil(host.tick(), "Finished match must not transmit indefinitely")
+        XCTAssertEqual(host.displayed.phase, .finished)
+        XCTAssertNil(host.tick(), "No post-game snapshots")
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
-                                                 sequence: 1, paddleY: 0.8)),
-                       "Inputs cannot alter a finished match")
+                                                 sequence: 1, paddleY: 0.8)))
     }
 
     func testUnexpectedPacketFieldsAreRejected() {
-        var host = MatchCoordinator()
-        host.startHosting()
-        let id = host.peerConnected(hello: MatchMessage(kind: .hello,
-                                                        matchID: UUID(), sequence: 0))!.packet.matchID
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
         XCTAssertFalse(host.receive(MatchMessage(kind: .input, matchID: id,
                                                  sequence: 1, paddleY: 0.5,
                                                  state: PongSnapshot())))
         XCTAssertTrue(host.receive(MatchMessage(kind: .input, matchID: id,
                                                 sequence: 1, paddleY: 0.5)))
-        var guest = MatchCoordinator()
-        guest.startJoining()
-        XCTAssertFalse(guest.receive(MatchMessage(kind: .welcome, matchID: id,
-                                                  sequence: 0, paddleY: 0.5,
-                                                  state: PongSnapshot())))
-        XCTAssertTrue(guest.receive(MatchMessage(kind: .welcome, matchID: id,
-                                                 sequence: 0, state: PongSnapshot())))
         XCTAssertFalse(guest.receive(MatchMessage(kind: .snapshot, matchID: id,
                                                   sequence: 1, paddleY: 0.5,
                                                   state: PongSnapshot())))
@@ -197,8 +310,7 @@ extension PongCoreTests {
     }
 
     func testSameInputsProduceSamePhysics() {
-        var first = PongGame()
-        var second = PongGame()
+        var first = PongGame(), second = PongGame()
         for i in 0..<3000 {
             let y = Double((i * 7) % 100) / 100
             first.move(.left, to: y)

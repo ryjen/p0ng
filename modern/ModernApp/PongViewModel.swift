@@ -1,7 +1,15 @@
 import Foundation
 import Combine
+import QuartzCore
 import MultipeerConnectivity
 import PongCore
+
+/// Weak proxy breaks CADisplayLink's retain cycle with its target.
+@MainActor
+private final class FrameTarget: NSObject {
+    weak var owner: PongViewModel?
+    @objc func frame(_ link: CADisplayLink) { owner?.frame(link) }
+}
 
 @MainActor
 final class PongViewModel: ObservableObject {
@@ -15,14 +23,26 @@ final class PongViewModel: ObservableObject {
 
     private var match = MatchCoordinator()
     private let transport = NearbyTransport()
-    private var timer: Timer?
+    private let frameTarget = FrameTarget()
+    private var displayLink: CADisplayLink?
+    private var lastFrameTime: CFTimeInterval?
+    private var frameStepper = FrameStepper()
+    private var interpolation = SnapshotInterpolator()
+    private var pendingInput = PaddleInputQueue()
+    private var localPaddleY: Double?
     private var connectionAttempt: UUID?
     private var lastHandshakeAt: TimeInterval = 0
     private var invitationID: UUID?
     private var retryMode: Screen?
 
-    var canRetryDiscovery: Bool { retryMode != nil }
+    #if DEBUG
+    private var debugFrameCount = 0
+    private var debugDelayedFrames = 0
+    private var debugSnapshotCount = 0
+    private var debugLastReport: Double = 0
+    #endif
 
+    var canRetryDiscovery: Bool { retryMode != nil }
     var isGuest: Bool { match.role == .guest }
     var isReady: Bool { match.ready }
     var roleLabel: String {
@@ -47,13 +67,14 @@ final class PongViewModel: ObservableObject {
             switch self.screen {
             case .hosting: mode = .hosting
             case .browsing, .connecting: mode = .browsing
-            default: return // Do not tear down an unrelated or new session.
+            default: return
             }
             self.transport.stop()
             self.match.disconnect()
             self.connectionAttempt = nil
             self.invitation = nil
             self.invitationID = nil
+            self.resetMotion()
             self.retryMode = mode
             self.screen = .menu
             self.message = "Nearby discovery failed: \(problem)"
@@ -70,48 +91,105 @@ final class PongViewModel: ObservableObject {
             guard let self else { return }
             self.connectionAttempt = nil
             self.match.disconnect()
+            self.resetMotion()
             self.screen = .menu
             self.message = reason
             self.transport.stop()
         }
         transport.onPacket = { [weak self] packet in
             guard let self else { return }
+            let hadMatch = self.match.matchID != nil
             let handshake = self.match.acceptHandshake(packet)
             if handshake.accepted {
                 if let response = handshake.response { self.transport.send(response) }
-                self.state = self.match.displayed
+                if self.match.role == .guest, !hadMatch, self.match.matchID != nil {
+                    self.interpolation.reset()
+                    self.interpolation.append(self.match.displayed, at: CACurrentMediaTime())
+                }
+                self.publish(self.match.displayed)
                 if self.match.ready {
                     self.connectionAttempt = nil
+                    self.frameStepper.reset()
+                    self.lastFrameTime = nil
                     self.screen = .playing
                 }
                 return
             }
             guard self.match.receive(packet) else { return }
-            self.connectionAttempt = nil
-            self.state = self.match.displayed
-            if self.match.ready { self.screen = .playing }
+            if self.match.role == .guest {
+                self.interpolation.append(self.match.displayed, at: CACurrentMediaTime())
+                #if DEBUG
+                self.debugSnapshotCount += 1
+                #endif
+                // Presentation of received state happens on the next display refresh.
+            } else {
+                self.publish(self.match.displayed)
+            }
         }
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        frameTarget.owner = self
+        let link = CADisplayLink(target: frameTarget, selector: #selector(FrameTarget.frame(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
     }
 
-    private func tick() {
-        // Retries recover both missing handshake packets and delegate ordering.
-        // The host never runs simulation before the guest acknowledges start.
+    private func publish(_ snapshot: PongSnapshot) {
+        var display = snapshot
+        if match.role == .guest, let y = localPaddleY {
+            // Never overwrite the finger position with a delayed host snapshot.
+            display.rightPaddleY = y
+        }
+        if state != display { state = display }
+    }
+
+    private func resetMotion() {
+        frameStepper.reset()
+        lastFrameTime = nil
+        interpolation.reset()
+        pendingInput.reset()
+        localPaddleY = nil
+    }
+
+    /// Called directly on the main actor, once per native display refresh.
+    /// No per-frame unbounded Task scheduling.
+    func frame(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let elapsed = lastFrameTime.map { now - $0 } ?? 0
+        lastFrameTime = now
         if !match.ready, transport.connected,
-           screen == .connecting || screen == .hosting {
-            let now = ProcessInfo.processInfo.systemUptime
+           (screen == .connecting || screen == .hosting) {
             if now - lastHandshakeAt >= 1.0 {
                 if let retry = match.handshakeRetry() { transport.send(retry) }
                 lastHandshakeAt = now
             }
         }
         guard screen == .playing else { return }
-        if let packet = match.tick() { transport.send(packet) }
-        if match.role != .guest { state = match.displayed }
+
+        #if DEBUG
+        debugFrameCount += 1
+        if elapsed > 1.0 / 40.0 { debugDelayedFrames += 1 }
+        if now - debugLastReport >= 5 {
+            // No identifiers or packet contents are logged.
+            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) discardedSimSeconds=\(frameStepper.discardedSeconds)")
+            debugFrameCount = 0
+            debugDelayedFrames = 0
+            debugSnapshotCount = 0
+            debugLastReport = now
+        }
+        #endif
+
+        if match.role == .guest {
+            if let input = pendingInput.take(at: now),
+               let packet = match.setPaddle(input.y, finished: input.finished) {
+                transport.send(packet)
+            }
+            publish(interpolation.sample(at: now) ?? match.displayed)
+        } else {
+            for _ in 0..<frameStepper.advance(elapsed: elapsed) {
+                if let packet = match.tick() { transport.send(packet) }
+            }
+            publish(match.displayed)
+        }
     }
 
     func playSolo() {
@@ -119,7 +197,8 @@ final class PongViewModel: ObservableObject {
         connectionAttempt = nil
         transport.stop()
         match.startSolo()
-        state = match.displayed
+        resetMotion()
+        publish(match.displayed)
         screen = .playing
         message = nil
     }
@@ -129,7 +208,8 @@ final class PongViewModel: ObservableObject {
         connectionAttempt = nil
         transport.stop()
         match.startHosting()
-        state = match.displayed
+        resetMotion()
+        publish(match.displayed)
         screen = .hosting
         message = nil
         transport.host()
@@ -140,7 +220,8 @@ final class PongViewModel: ObservableObject {
         connectionAttempt = nil
         transport.stop()
         match.startJoining()
-        state = match.displayed
+        resetMotion()
+        publish(match.displayed)
         screen = .browsing
         message = nil
         transport.browse()
@@ -152,7 +233,6 @@ final class PongViewModel: ObservableObject {
         let attempt = UUID()
         connectionAttempt = attempt
         transport.join(peer)
-        // Ignore timeouts belonging to an earlier connection attempt.
         DispatchQueue.main.asyncAfter(deadline: .now() + 23) { [weak self] in
             guard let self, self.connectionAttempt == attempt,
                   self.screen == .connecting, !self.match.ready else { return }
@@ -168,8 +248,6 @@ final class PongViewModel: ObservableObject {
         transport.decideInvitation(accept: allow)
     }
 
-    /// UIKit/SwiftUI can set the alert binding false before delivering its
-    /// button action. Defer passive dismissal to let the explicit choice win.
     func dismissInvitationIfPending() {
         guard let token = invitationID else { return }
         DispatchQueue.main.async { [weak self] in
@@ -187,10 +265,24 @@ final class PongViewModel: ObservableObject {
 
     func movePaddle(y: Double, finished: Bool = false) {
         guard screen == .playing else { return }
-        if let packet = match.setPaddle(max(0, min(1, y)), finished: finished) {
-            transport.send(packet)
+        let position = min(1 - PongGame.paddleHeight / 2,
+                           max(PongGame.paddleHeight / 2, y))
+        if match.role == .guest {
+            localPaddleY = position
+            pendingInput.offer(y: position, finished: finished)
+            var display = state
+            display.rightPaddleY = position
+            publish(display)
+            // The final finger release must be sent reliably even if the
+            // display link pauses just after the drag ends.
+            if finished, let input = pendingInput.take(at: CACurrentMediaTime()),
+               let packet = match.setPaddle(input.y, finished: input.finished) {
+                transport.send(packet)
+            }
+        } else {
+            _ = match.setPaddle(position, finished: finished)
+            publish(match.displayed)
         }
-        state = match.displayed
     }
 
     func leave() {
@@ -199,10 +291,11 @@ final class PongViewModel: ObservableObject {
         connectionAttempt = nil
         transport.stop()
         match.disconnect()
+        resetMotion()
         screen = .menu
         message = nil
         invitation = nil
     }
 
-    deinit { timer?.invalidate() }
+    deinit { displayLink?.invalidate() }
 }

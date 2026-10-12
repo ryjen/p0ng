@@ -357,3 +357,67 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testFrameStepperCatchesUpAndCapsBackgroundStalls() {
+        var clock = FrameStepper()
+        XCTAssertEqual(clock.advance(elapsed: 1.0 / 60.0), 1)
+        XCTAssertEqual(clock.advance(elapsed: 1.0 / 30.0), 2)
+        XCTAssertEqual(clock.advance(elapsed: 0), 0)
+        XCTAssertEqual(clock.advance(elapsed: .nan), 0)
+        XCTAssertEqual(clock.advance(elapsed: 10), 6, "Do not simulate 10 seconds in one frame")
+        XCTAssertGreaterThan(clock.discardedSeconds, 9)
+        clock.reset()
+        XCTAssertEqual(clock.discardedSeconds, 0)
+        XCTAssertEqual(clock.advance(elapsed: 1.0 / 60.0), 1)
+    }
+
+    func testInputQueueCoalescesAndReleasesReliably() {
+        var queue = PaddleInputQueue()
+        queue.offer(y: 0.2, finished: false)
+        queue.offer(y: 0.8, finished: false)
+        XCTAssertEqual(queue.take(at: 1)?.y, 0.8, accuracy: 0.001)
+        XCTAssertNil(queue.take(at: 1.01))
+        queue.offer(y: 0.3, finished: false)
+        XCTAssertNil(queue.take(at: 1.02))
+        queue.offer(y: 0.4, finished: true)
+        let final = queue.take(at: 1.021)
+        XCTAssertEqual(final?.y, 0.4)
+        XCTAssertEqual(final?.finished, true)
+        XCTAssertNil(queue.take(at: 1.1))
+    }
+
+    func testRenderOnlyInterpolationDoesNotBlendScores() {
+        var buffer = SnapshotInterpolator(delay: 0.02)
+        var a = PongSnapshot()
+        a.phase = .playing
+        a.ballX = 0.1
+        var b = a
+        b.ballX = 0.5
+        buffer.append(a, at: 1.0)
+        buffer.append(b, at: 1.1)
+        XCTAssertEqual(buffer.sample(at: 1.07)?.ballX ?? -1, 0.3, accuracy: 0.001)
+        var scored = b
+        scored.leftScore = 1
+        scored.phase = .serving
+        buffer.append(scored, at: 1.2)
+        XCTAssertEqual(buffer.sample(at: 1.21)?.leftScore, 1,
+                       "Never display a partial or interpolated score")
+        XCTAssertEqual(buffer.sample(at: 1.21)?.ballX, scored.ballX)
+    }
+
+    func testInterpolatorRejectsOutOfOrderArrivalAndBoundsHistory() {
+        var buffer = SnapshotInterpolator()
+        var state = PongSnapshot()
+        state.phase = .playing
+        for i in 0..<20 {
+            state.ballX = Double(i) / 20
+            buffer.append(state, at: Double(i) / 30)
+        }
+        let before = buffer.sample(at: 1)!.ballX
+        state.ballX = 0
+        buffer.append(state, at: -1)
+        XCTAssertEqual(buffer.sample(at: 1)!.ballX, before)
+        buffer.reset()
+        XCTAssertNil(buffer.sample(at: 2))
+    }
+}

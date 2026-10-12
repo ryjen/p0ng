@@ -16,6 +16,9 @@ targets:
     dependencies:
       - package: PongCore
         product: PongCore
+    scheme:
+      testTargets:
+        - p0ngUITests
     info:
       path: ModernApp/Info.plist
     settings:
@@ -23,4 +26,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern
         SWIFT_VERSION: '5.9'
         TARGETED_DEVICE_FAMILY: '1,2'
+        CODE_SIGN_STYLE: Automatic
+
+  p0ngUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ModernUITests
+    dependencies:
+      - target: p0ng
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern.uitests
+        SWIFT_VERSION: '5.9'
+        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic

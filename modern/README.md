@@ -27,3 +27,5 @@ Run `swift test` for cross-platform protocol and physics tests. See `VALIDATION.
 ## Deliberate limitations
 
 This initial delivery supports local-area two-player matches, **not internet matchmaking or Game Center**. The guest displays authoritative snapshots at 30 Hz; interpolation/latency smoothing is a follow-up. At present the two-player match is all-or-nothing on disconnect. The historical `p0ng.xcodeproj` is not overwritten. Preserve its implementation and assets until device parity is confirmed.
+
+The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS Simulator (launch, solo mode, exit, menu). Simulator tests cannot establish that MultipeerConnectivity works between physical devices.

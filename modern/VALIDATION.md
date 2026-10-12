@@ -8,7 +8,7 @@ This is a candidate implementation. The Foundation game engine is verified on Li
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
-- [ ] Interactive iOS Simulator smoke test (install, launch, navigate, solo play)
+- [ ] Hosted interactive iOS Simulator UI smoke (XCTest launch, solo play, exit, menu availability); check CI result before marking complete
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 

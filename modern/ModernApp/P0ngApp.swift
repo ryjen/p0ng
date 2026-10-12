@@ -22,7 +22,7 @@ struct PongHomeView: View {
     var body: some View {
         VStack(spacing: 18) {
             HStack {
-                Text("p0ng").font(.system(size: 34, weight: .black, design: .monospaced))
+                Text("p0ng").accessibilityIdentifier("pong.title").font(.system(size: 34, weight: .black, design: .monospaced))
                 Spacer()
                 if model.screen != .menu {
                     Button("Exit") { model.leave() }

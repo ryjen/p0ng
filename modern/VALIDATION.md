@@ -4,11 +4,12 @@ This is an integration candidate. The Foundation game engine passes portable tes
 
 ## Build gates
 
-- [x] 26 portable XCTest cases passed for game physics, handshake, pacing, input coalescing, interpolation, and paddle reconciliation ([performance candidate CI](https://github.com/ryjen/p0ng/actions/runs/38219041864))
+- [x] 33 portable XCTest cases passed at implementation commit `3362163`, including four deterministic delayed/lossy/reordered two-player integration tests ([Linux CI run](https://github.com/ryjen/p0ng/actions/runs/38315620257))
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
-- [x] Hosted iOS Simulator XCTest smoke passed (2 cases: launch/solo/exit and nearby-menu visibility) in the same workflow run
+- [x] Hosted iOS Simulator tests passed on previous validated head: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38227924445)); verify the latest documentation head separately.
+- [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 - [ ] Test VoiceOver adjustable paddle input, interrupted drags, and accessibility contrast on actual iOS devices.
@@ -28,14 +29,15 @@ This is an integration candidate. The Foundation game engine passes portable tes
 ## Security/operational notes
 
 - MCSession encryption is required but peer display names are not authenticated identities. Host approval is a consent gate, not cryptographic identity proof. This is sufficient for casual local play, not adversarial internet matchmaking.
-- Every received wire payload is capped at 4 KiB; guest cannot write game ball, scores, or phase. The host is the sole authority.
+- Received wire payloads are capped at 4 KiB with a bounded 120-packets/second decoding budget; guest cannot author game ball, scores, or phase. Host remains the sole authority.
 - The application deliberately does not advertise while a match is active.
 - Packet sequence and match UUID reject stale or duplicate packets but do not implement a reconnect/resume token. Disconnect means a new match.
 - Do not deploy a relay, cloud backend, Game Center entitlement, or analytics service for the LAN slice.
 
 ## Follow-on items (do not block initial LAN qualification)
 
-- Network interpolation and jitter buffer, independent of authoritative scoring.
-- UI polish, sound/haptics, accessibility controls, settings, match length, and deterministic replay harness.
+- Tune the implemented 67 ms render-only jitter buffer against physical-device RTT and screen recordings; compare with SpriteKit only if measurements show a rendering bottleneck.
+- Verify implemented sounds, haptics, adjustable VoiceOver input and icon in signed physical builds; assess match length and settings UX separately.
+- Expand the current deterministic peer fault harness to cover native transport failure injection and actual connection-admission interactions.
 - Internet matchmaking (e.g. modern GameKit) through a second `Transport` implementation without changing the core protocol.
 - macOS and tvOS targets once iOS device evidence is collected. The legacy project remains available for behavior comparison.

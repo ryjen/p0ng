@@ -85,8 +85,9 @@ public struct MatchCoordinator {
                                                    sequence: 0), quality: .reliable)
     }
 
+    /// Repeated hello is idempotent: resend the same welcome if it was lost.
     public mutating func peerConnected(hello: MatchMessage) -> OutgoingMessage? {
-        guard role == .host, !ready, let matchID,
+        guard role == .host, let matchID,
               hello.version == MatchMessage.protocolVersion,
               hello.kind == .hello, hello.sequence == 0,
               hello.paddleY == nil, hello.state == nil else { return nil }

@@ -118,7 +118,8 @@ public struct MatchCoordinator {
 
     /// Call at a fixed 60 Hz. Host snapshots at 30 Hz, with reliable phase/score changes.
     public mutating func tick() -> OutgoingMessage? {
-        guard ready, role == .solo || role == .host else { return nil }
+        guard ready, role == .solo || role == .host,
+              displayed.phase != .finished else { return nil }
         let before = game.snapshot
         game.tick(1.0 / 60.0, againstComputer: role == .solo)
         displayed = game.snapshot
@@ -140,7 +141,9 @@ public struct MatchCoordinator {
         guard message.version == MatchMessage.protocolVersion else { return false }
         switch role {
         case .host:
-            guard ready, message.kind == .input, message.matchID == matchID,
+            guard ready, game.snapshot.phase != .finished,
+                  message.kind == .input, message.matchID == matchID,
+                  message.state == nil,
                   message.sequence > lastInput,
                   let y = message.paddleY, y.isFinite, (0...1).contains(y) else { return false }
             lastInput = message.sequence
@@ -149,6 +152,7 @@ public struct MatchCoordinator {
             return true
         case .guest:
             if message.kind == .welcome, !ready, matchID == nil,
+               message.paddleY == nil,
                let state = message.state, Self.valid(state) {
                 matchID = message.matchID
                 displayed = state
@@ -158,6 +162,7 @@ public struct MatchCoordinator {
             }
             guard ready, message.kind == .snapshot, message.matchID == matchID,
                   message.sequence > lastSnapshot,
+                  message.paddleY == nil,
                   let state = message.state, Self.valid(state) else { return false }
             lastSnapshot = message.sequence
             displayed = state

@@ -134,7 +134,10 @@ extension PongCoreTests {
         XCTAssertEqual(hello.packet.kind, .hello)
         XCTAssertEqual(hello.quality, .reliable)
         let welcome = host.peerConnected(hello: hello.packet)!.packet
-        XCTAssertNil(host.peerConnected(hello: hello.packet), "Replay must not restart match")
+        let resent = host.peerConnected(hello: hello.packet)
+        XCTAssertEqual(resent?.packet.matchID, welcome.matchID,
+                       "Retry must resend the same welcome without restarting match")
+        XCTAssertEqual(resent?.quality, .reliable)
         XCTAssertTrue(guest.receive(welcome))
         XCTAssertNil(guest.makeHello())
     }

@@ -8,7 +8,8 @@ import PongCore
 final class NearbyTransport: NSObject, MCNearbyServiceAdvertiserDelegate,
                              MCNearbyServiceBrowserDelegate, MCSessionDelegate {
     private static let service = "p0ng-lan"
-    private let localPeer = MCPeerID(displayName: UIDevice.current.name)
+    // Avoid advertising the owner's device name (often personally identifying).
+    private let localPeer = MCPeerID(displayName: "p0ng-" + String(UUID().uuidString.prefix(6)))
     private var session: MCSession?
     private var advertiser: MCNearbyServiceAdvertiser?
     private var browser: MCNearbyServiceBrowser?

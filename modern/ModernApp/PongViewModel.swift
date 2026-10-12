@@ -17,7 +17,11 @@ final class PongViewModel: ObservableObject {
     private let transport = NearbyTransport()
     private var timer: Timer?
     private var connectionAttempt: UUID?
-    private var lastHelloAt: TimeInterval = 0
+    private var lastHandshakeAt: TimeInterval = 0
+    private var invitationID: UUID?
+    private var retryMode: Screen?
+
+    var canRetryDiscovery: Bool { retryMode != nil }
 
     var isGuest: Bool { match.role == .guest }
     var isReady: Bool { match.ready }
@@ -32,15 +36,35 @@ final class PongViewModel: ObservableObject {
 
     init() {
         transport.onPeersChanged = { [weak self] peers in self?.peers = peers }
-        transport.onInvitation = { [weak self] name in self?.invitation = name }
+        transport.onInvitation = { [weak self] name in
+            self?.invitationID = UUID()
+            self?.invitation = name
+        }
         transport.onError = { [weak self] problem in self?.message = problem }
+        transport.onDiscoveryFailed = { [weak self] problem in
+            guard let self else { return }
+            let mode: Screen
+            switch self.screen {
+            case .hosting: mode = .hosting
+            case .browsing, .connecting: mode = .browsing
+            default: return // Do not tear down an unrelated or new session.
+            }
+            self.transport.stop()
+            self.match.disconnect()
+            self.connectionAttempt = nil
+            self.invitation = nil
+            self.invitationID = nil
+            self.retryMode = mode
+            self.screen = .menu
+            self.message = "Nearby discovery failed: \(problem)"
+        }
         transport.onConnected = { [weak self] in
             guard let self else { return }
-            if let hello = self.match.makeHello() {
-                self.transport.send(hello)
-                self.lastHelloAt = ProcessInfo.processInfo.systemUptime
+            if self.match.role == .guest {
+                self.screen = .connecting
+                if let hello = self.match.handshakeRetry() { self.transport.send(hello) }
             }
-            if self.match.role == .guest { self.screen = .connecting }
+            self.lastHandshakeAt = ProcessInfo.processInfo.systemUptime
         }
         transport.onDisconnected = { [weak self] in
             guard let self else { return }
@@ -52,9 +76,14 @@ final class PongViewModel: ObservableObject {
         }
         transport.onPacket = { [weak self] packet in
             guard let self else { return }
-            if let welcome = self.match.peerConnected(hello: packet) {
-                self.transport.send(welcome)
-                self.screen = .playing
+            let handshake = self.match.acceptHandshake(packet)
+            if handshake.accepted {
+                if let response = handshake.response { self.transport.send(response) }
+                self.state = self.match.displayed
+                if self.match.ready {
+                    self.connectionAttempt = nil
+                    self.screen = .playing
+                }
                 return
             }
             guard self.match.receive(packet) else { return }
@@ -70,13 +99,14 @@ final class PongViewModel: ObservableObject {
     }
 
     private func tick() {
-        // Some MCSession delegates may deliver a packet before the host's
-        // connected callback reaches the main queue. Retry until welcomed.
-        if screen == .connecting, match.role == .guest, !match.ready, transport.connected {
+        // Retries recover both missing handshake packets and delegate ordering.
+        // The host never runs simulation before the guest acknowledges start.
+        if !match.ready, transport.connected,
+           screen == .connecting || screen == .hosting {
             let now = ProcessInfo.processInfo.systemUptime
-            if now - lastHelloAt >= 1.0 {
-                if let hello = match.makeHello() { transport.send(hello) }
-                lastHelloAt = now
+            if now - lastHandshakeAt >= 1.0 {
+                if let retry = match.handshakeRetry() { transport.send(retry) }
+                lastHandshakeAt = now
             }
         }
         guard screen == .playing else { return }
@@ -85,6 +115,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func playSolo() {
+        retryMode = nil
         connectionAttempt = nil
         transport.stop()
         match.startSolo()
@@ -94,6 +125,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func host() {
+        retryMode = nil
         connectionAttempt = nil
         transport.stop()
         match.startHosting()
@@ -104,6 +136,7 @@ final class PongViewModel: ObservableObject {
     }
 
     func browse() {
+        retryMode = nil
         connectionAttempt = nil
         transport.stop()
         match.startJoining()
@@ -129,8 +162,27 @@ final class PongViewModel: ObservableObject {
     }
 
     func respondToInvitation(_ allow: Bool) {
+        guard invitationID != nil else { return }
+        invitationID = nil
         invitation = nil
         transport.decideInvitation(accept: allow)
+    }
+
+    /// UIKit/SwiftUI can set the alert binding false before delivering its
+    /// button action. Defer passive dismissal to let the explicit choice win.
+    func dismissInvitationIfPending() {
+        guard let token = invitationID else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.invitationID == token else { return }
+            self.respondToInvitation(false)
+        }
+    }
+
+    func retryDiscovery() {
+        guard let mode = retryMode else { return }
+        retryMode = nil
+        if mode == .hosting { host() }
+        else { browse() }
     }
 
     func movePaddle(y: Double, finished: Bool = false) {
@@ -142,6 +194,8 @@ final class PongViewModel: ObservableObject {
     }
 
     func leave() {
+        retryMode = nil
+        invitationID = nil
         connectionAttempt = nil
         transport.stop()
         match.disconnect()

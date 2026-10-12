@@ -1,13 +1,14 @@
 # p0ng modernization: release qualification
 
-This is a candidate implementation. The Foundation game engine is verified with `swift test` on Linux. The SwiftUI app and Apple MultipeerConnectivity delegate lifecycle require macOS/Xcode and physical devices for verification before release.
+This is a candidate implementation. The Foundation game engine is verified on Linux and the SwiftUI app compiles for iOS Simulator on GitHub-hosted macOS. Build success is not proof that native app navigation or nearby matchmaking works at runtime. Physical-device multiplayer qualification remains required before release.
 
 ## Build gates
 
-- [x] Portable engine, protocol, and role-isolation tests (`swift test`)
+- [x] Portable engine, protocol, and role-isolation tests (14 XCTest cases, Swift 6.2.1 / Linux)
 - [x] Swift syntax parse and YAML parse
-- [ ] `xcodegen generate` on macOS
-- [ ] Xcode build and simulator smoke test
+- [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
+- [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
+- [ ] Interactive iOS Simulator smoke test (install, launch, navigate, solo play)
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 

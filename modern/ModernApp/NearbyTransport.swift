@@ -3,6 +3,14 @@ import MultipeerConnectivity
 import UIKit
 import PongCore
 
+/// Strongly retains a legacy SDK instance across a main-actor handoff,
+/// solely to compare object identity. A bare ObjectIdentifier is insufficient:
+/// after deallocation a new SDK session can reuse the same address.
+/// Framework methods and mutable state remain accessed only on MainActor.
+private struct SDKReference<Object: AnyObject>: @unchecked Sendable {
+    let value: Object
+}
+
 /// Immutable MCPeerID value crossing a legacy delegate-to-MainActor handoff.
 /// MCPeerID has no mutable public identity state; use it only on MainActor.
 private struct PeerReference: @unchecked Sendable {
@@ -179,12 +187,12 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                                 didReceiveInvitationFromPeer peerID: MCPeerID,
                                 withContext context: Data?,
                                 invitationHandler: @escaping (Bool, MCSession?) -> Void) {
-        let id = ObjectIdentifier(advertiser)
+        let sdk = SDKReference(value: advertiser)
         let peer = PeerReference(value: peerID)
         let reply = InvitationReply(invitationHandler)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.advertiser,
-                  ObjectIdentifier(current) == id,
+                  current === sdk.value,
                   self.hosting, !self.connected, self.acceptedPeer == nil,
                   self.pendingInvitation == nil, self.session != nil,
                   self.admission.offer() else {
@@ -198,22 +206,22 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
 
     nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
                                 didNotStartAdvertisingPeer error: Error) {
-        let id = ObjectIdentifier(advertiser)
+        let sdk = SDKReference(value: advertiser)
         let reason = error.localizedDescription
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.advertiser,
-                  ObjectIdentifier(current) == id else { return }
+                  current === sdk.value else { return }
             self.onDiscoveryFailed?(reason)
         }
     }
 
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID,
                              withDiscoveryInfo info: [String: String]?) {
-        let id = ObjectIdentifier(browser)
+        let sdk = SDKReference(value: browser)
         let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.browser,
-                  ObjectIdentifier(current) == id else { return }
+                  current === sdk.value else { return }
             if !self.discovered.contains(peer.value) {
                 self.discovered.append(peer.value)
                 self.peerTokens[peer.value] = UUID()
@@ -223,11 +231,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     }
 
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
-        let id = ObjectIdentifier(browser)
+        let sdk = SDKReference(value: browser)
         let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.browser,
-                  ObjectIdentifier(current) == id else { return }
+                  current === sdk.value else { return }
             self.discovered.removeAll { $0 == peer.value }
             self.peerTokens.removeValue(forKey: peer.value)
             self.onPeersChanged?(self.publishedPeers())
@@ -236,23 +244,23 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
 
     nonisolated func browser(_ browser: MCNearbyServiceBrowser,
                              didNotStartBrowsingForPeers error: Error) {
-        let id = ObjectIdentifier(browser)
+        let sdk = SDKReference(value: browser)
         let reason = error.localizedDescription
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.browser,
-                  ObjectIdentifier(current) == id else { return }
+                  current === sdk.value else { return }
             self.onDiscoveryFailed?(reason)
         }
     }
 
     nonisolated func session(_ session: MCSession, peer peerID: MCPeerID,
                              didChange state: MCSessionState) {
-        let id = ObjectIdentifier(session)
+        let sdk = SDKReference(value: session)
         let peer = PeerReference(value: peerID)
         let stateCode = state.rawValue
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.session,
-                  ObjectIdentifier(current) == id,
+                  current === sdk.value,
                   let state = MCSessionState(rawValue: stateCode) else { return }
             switch state {
             case .connected:
@@ -289,11 +297,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
         guard data.count <= 4096, canDecodePacket(),
               let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
-        let id = ObjectIdentifier(session)
+        let sdk = SDKReference(value: session)
         let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.session,
-                  ObjectIdentifier(current) == id,
+                  current === sdk.value,
                   self.connected, self.activePeer == peer.value,
                   current.connectedPeers.count == 1,
                   current.connectedPeers.contains(peer.value) else { return }
@@ -304,10 +312,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     /// p0ng's protocol has only bounded data packets. Streams and resource
     /// transfers are outside the negotiated protocol and must never be accepted
     /// merely because a peer joined an encrypted session.
-    nonisolated private func rejectUnexpectedChannel(sessionID: ObjectIdentifier) {
+    nonisolated private func rejectUnexpectedChannel(from source: MCSession) {
+        let sdk = SDKReference(value: source)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.session,
-                  ObjectIdentifier(current) == sessionID else { return }
+                  current === sdk.value else { return }
             self.stop()
             self.onDisconnected?("Match ended: unsupported network channel.")
         }
@@ -316,17 +325,17 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     nonisolated func session(_ session: MCSession, didReceive stream: InputStream,
                              withName streamName: String, fromPeer peerID: MCPeerID) {
         stream.close()
-        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
+        rejectUnexpectedChannel(from: session)
     }
 
     nonisolated func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String,
                              fromPeer peerID: MCPeerID, with progress: Progress) {
         progress.cancel()
-        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
+        rejectUnexpectedChannel(from: session)
     }
 
     nonisolated func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String,
                              fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
-        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
+        rejectUnexpectedChannel(from: session)
     }
 }

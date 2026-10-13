@@ -35,11 +35,36 @@ jobs:
     name: iOS Simulator build and UI smoke
     runs-on: macos-15
     timeout-minutes: 35
+    # The runner's default Xcode can drift. Fail closed if this supported
+    # version is removed, rather than silently changing compiler/SDK behavior.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Install XcodeGen
-        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Verify pinned Xcode
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
+      - name: Install pinned XcodeGen 2.46.0
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen-2.46.0.zip"
+          destination="$RUNNER_TEMP/pinned-xcodegen"
+          curl --fail --location --silent --show-error --retry 3 \
+            --output "$archive" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          # Digest published with the upstream GitHub release asset.
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $archive" | shasum -a 256 -c -
+          mkdir -p "$destination"
+          ditto -x -k "$archive" "$destination"
+          bin="$(find "$destination" -type f -name xcodegen | head -n 1)"
+          test -n "$bin"
+          test -x "$bin"
+          "$bin" --version | grep -F "2.46.0"
+          echo "$(dirname "$bin")" >> "$GITHUB_PATH"
       - name: Generate project
         working-directory: modern
         run: xcodegen generate --spec project.yml

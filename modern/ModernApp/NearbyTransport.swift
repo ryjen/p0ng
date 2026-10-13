@@ -1,209 +1,332 @@
-import XCTest
+import Foundation
+import MultipeerConnectivity
+import UIKit
 import PongCore
-@testable import p0ng
 
-/// Unit-level lifecycle coverage; no MultipeerConnectivity or Apple accounts.
+/// Immutable MCPeerID value crossing a legacy delegate-to-MainActor handoff.
+/// MCPeerID has no mutable public identity state; use it only on MainActor.
+private struct PeerReference: @unchecked Sendable {
+    let value: MCPeerID
+}
+
+/// Once-only response to an SDK invitation from an arbitrary callback queue.
+final class InvitationReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: ((Bool, MCSession?) -> Void)?
+    init(_ handler: @escaping (Bool, MCSession?) -> Void) { self.handler = handler }
+    func respond(_ accepted: Bool, session: MCSession?) {
+        lock.lock()
+        let current = handler
+        handler = nil
+        lock.unlock()
+        current?(accepted, session)
+    }
+}
+
+/// The only mutable transport state accessed by delegate threads.
+final class LockedPacketIngress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var window = PacketIngressWindow()
+    func allow(at time: TimeInterval) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return window.admit(at: time)
+    }
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        window.reset()
+    }
+}
+
+/// LAN transport for exactly two players. Intentionally no third-party relay or account.
+/// Callbacks are delivered on the main queue for the SwiftUI coordinator.
 @MainActor
-final class PongCoordinatorUnitTests: XCTestCase {
-    final class FakeTransport: GameTransport {
-        var connected = false
-        var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
-        var onInvitation: (@MainActor @Sendable (String) -> Void)?
-        var onConnected: (@MainActor @Sendable () -> Void)?
-        var onDisconnected: (@MainActor @Sendable (String) -> Void)?
-        var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
-        var onError: (@MainActor @Sendable (String) -> Void)?
-        var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
-        var messages: [OutgoingMessage] = []
-        var decisions: [Bool] = []
-        var hostCalls = 0
-        var browseCalls = 0
-        var stops = 0
-        func host() { hostCalls += 1 }
-        func browse() { browseCalls += 1 }
-        func join(_ peer: NearbyPeer) {}
-        func decideInvitation(accept: Bool) { decisions.append(accept) }
-        func send(_ message: OutgoingMessage) { messages.append(message) }
-        func stop() { stops += 1; connected = false }
+final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserDelegate,
+                             MCNearbyServiceBrowserDelegate, MCSessionDelegate {
+    private static let service = "p0ng-lan"
+    // Avoid advertising the owner's device name (often personally identifying).
+    private let localPeer = MCPeerID(displayName: "p0ng-" + String(UUID().uuidString.prefix(6)))
+    private var session: MCSession?
+    private var advertiser: MCNearbyServiceAdvertiser?
+    private var browser: MCNearbyServiceBrowser?
+    private(set) var hosting = false
+    private(set) var connected = false
+    private var pendingInvitation: (peer: MCPeerID, reply: InvitationReply)?
+    private var acceptedPeer: MCPeerID?
+    private var selectedPeer: MCPeerID?
+    private var activePeer: MCPeerID?
+    private var admission = NearbyAdmissionGate()
+    private let ingress = LockedPacketIngress()
+
+    nonisolated private func canDecodePacket() -> Bool {
+        ingress.allow(at: ProcessInfo.processInfo.systemUptime)
     }
 
-    func testHostInvitationAndDisconnectResetState() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        XCTAssertFalse(model.isDisplayClockRunning)
-        model.host()
-        XCTAssertEqual(network.hostCalls, 1)
-        XCTAssertFalse(model.isDisplayClockRunning, "Advertising does not need 60 fps")
-        network.onInvitation?("guest-1")
-        XCTAssertEqual(model.invitation, "guest-1")
-        model.respondToInvitation(true)
-        model.respondToInvitation(true)
-        XCTAssertEqual(network.decisions, [true], "Approval is idempotent")
-        network.connected = true
-        network.onConnected?()
-        XCTAssertTrue(model.isDisplayClockRunning, "Handshake retries need a clock")
+    var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
+    var onInvitation: (@MainActor @Sendable (String) -> Void)?
+    var onConnected: (@MainActor @Sendable () -> Void)?
+    var onDisconnected: (@MainActor @Sendable (String) -> Void)?
+    var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
+    var onError: (@MainActor @Sendable (String) -> Void)?
+    var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
+    private var discovered: [MCPeerID] = []
+    private var peerTokens: [MCPeerID: UUID] = [:]
 
-        var guest = MatchCoordinator()
-        guest.startJoining()
-        network.onPacket?(guest.handshakeRetry()!.packet)
-        let welcome = try! XCTUnwrap(network.messages.last).packet
-        let ready = guest.acceptHandshake(welcome).response!.packet
-        network.onPacket?(ready)
-        let start = network.messages.last!.packet
-        let started = guest.acceptHandshake(start).response!.packet
-        network.onPacket?(started)
-        XCTAssertEqual(model.screen, .playing)
-        XCTAssertTrue(model.isDisplayClockRunning)
-
-        network.onDisconnected?("Connection lost")
-        XCTAssertEqual(model.screen, .menu)
-        XCTAssertFalse(model.isDisplayClockRunning)
-        XCTAssertEqual(model.message, "Connection lost")
-        XCTAssertFalse(model.isReady)
-    }
-
-    func testCancelledDiscoveryCanRetryWithoutReusingSession() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.host()
-        network.onDiscoveryFailed?("Local Network denied")
-        XCTAssertEqual(model.screen, .menu)
-        XCTAssertTrue(model.canRetryDiscovery)
-        XCTAssertFalse(model.isDisplayClockRunning)
-        model.retryDiscovery()
-        XCTAssertEqual(network.hostCalls, 2)
-        XCTAssertFalse(model.canRetryDiscovery)
-    }
-
-    func testBrowsingUsesTransportNeutralPeerIDs() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.browse()
-        let peer = NearbyPeer(id: UUID(), displayName: "test-peer")
-        network.onPeersChanged?([peer])
-        XCTAssertEqual(model.peers, [peer])
-        XCTAssertEqual(model.screen, .browsing)
-        XCTAssertFalse(model.isDisplayClockRunning)
-        model.leave()
-        XCTAssertEqual(model.screen, .menu)
-        XCTAssertTrue(model.peers.isEmpty,
-                      "Leaving must clear stale discovered peers even if transport callback is absent")
-    }
-
-    func testStaleDiscoveryAndSessionCallbacksDoNotReopenMenu() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.host()
-        model.leave()
-
-        let oldPeer = NearbyPeer(id: UUID(), displayName: "old-host")
-        network.onPeersChanged?([oldPeer])
-        network.onInvitation?("obsolete-request")
-        network.onError?("stale network send")
-        network.onDisconnected?("stale disconnection")
-        network.connected = true
-        network.onConnected?()
-
-        XCTAssertEqual(model.screen, .menu)
-        XCTAssertTrue(model.peers.isEmpty)
-        XCTAssertNil(model.invitation)
-        XCTAssertNil(model.message)
-        XCTAssertFalse(model.isDisplayClockRunning)
-    }
-
-    func testDelayedOldSessionCallbacksCannotCancelSoloGame() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.host()
-        model.leave()
-        model.playSolo()
-        let initial = model.state
-        network.connected = true
-        network.onConnected?()
-        network.onDisconnected?("obsolete disconnect")
-        network.onInvitation?("obsolete invite")
-        network.onPacket?(MatchMessage(kind: .snapshot, matchID: UUID(),
-                                      sequence: 42, state: PongSnapshot()))
-        XCTAssertEqual(model.screen, .playing)
-        XCTAssertEqual(model.roleLabel, "Solo · Left paddle")
-        XCTAssertEqual(model.state, initial)
-        XCTAssertNil(model.message)
-        XCTAssertNil(model.invitation)
-        XCTAssertTrue(model.isDisplayClockRunning)
-    }
-
-    func testLatePacketAfterLeaveCannotRestorePlayingScreen() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.host()
-        model.leave()
-        let packet = MatchMessage(kind: .started, matchID: UUID(), sequence: 0)
-        network.onPacket?(packet)
-        XCTAssertEqual(model.screen, .menu)
-        XCTAssertFalse(model.isReady)
-    }
-}
-
-extension PongCoordinatorUnitTests {
-    func testInactiveScenePausesAndResumeAvoidsSimulationBurst() {
-        let network = FakeTransport()
-        let model = PongViewModel(transport: network)
-        model.playSolo()
-        XCTAssertTrue(model.isDisplayClockRunning)
-        model.setInteractive(false)
-        XCTAssertFalse(model.isDisplayClockRunning)
-        XCTAssertEqual(model.screen, .playing, "Short interruption must not silently end a match")
-        model.setInteractive(true)
-        XCTAssertTrue(model.isDisplayClockRunning)
-        model.leave()
-        XCTAssertFalse(model.isDisplayClockRunning)
-        model.setInteractive(false)
-        model.setInteractive(true)
-        XCTAssertFalse(model.isDisplayClockRunning)
-    }
-
-    func testLegacySoundResourcesArePackagedIntoModernApp() {
-        XCTAssertNotNil(Bundle.main.url(forResource: "offthepaddle", withExtension: "wav"))
-        XCTAssertNotNil(Bundle.main.url(forResource: "offthewall", withExtension: "wav"))
-    }
-}
-
-/// Exercises the actual ObjC-delegate crossing guards using adversarial,
-/// concurrent invocations without requiring Bluetooth/Wi-Fi or Apple accounts.
-extension PongCoordinatorUnitTests {
-    final class CallbackRecorder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = 0
-        func record() {
-            lock.lock()
-            value += 1
-            lock.unlock()
-        }
-        var count: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return value
+    private func publishedPeers() -> [NearbyPeer] {
+        discovered.compactMap { peer in
+            guard let id = peerTokens[peer] else { return nil }
+            return NearbyPeer(id: id, displayName: peer.displayName)
         }
     }
 
-    func testInvitationReplyFiresExactlyOnceWithConcurrentResolutions() {
-        let recorder = CallbackRecorder()
-        let reply = InvitationReply { _, _ in recorder.record() }
-        DispatchQueue.concurrentPerform(iterations: 48) { _ in
-            reply.respond(true, session: nil)
-        }
-        reply.respond(false, session: nil)
-        XCTAssertEqual(recorder.count, 1)
+    func host() {
+        stop()
+        hosting = true
+        prepareSession()
+        let advertiser = MCNearbyServiceAdvertiser(peer: localPeer,
+            discoveryInfo: nil, serviceType: Self.service)
+        self.advertiser = advertiser
+        advertiser.delegate = self
+        advertiser.startAdvertisingPeer()
     }
 
-    func testDelegatePacketBudgetIsRaceFreeAndResetsPerSession() {
-        let limiter = LockedPacketIngress()
-        let accepted = CallbackRecorder()
-        DispatchQueue.concurrentPerform(iterations: 256) { _ in
-            if limiter.allow(at: 100) { accepted.record() }
+    func browse() {
+        stop()
+        hosting = false
+        prepareSession()
+        let browser = MCNearbyServiceBrowser(peer: localPeer, serviceType: Self.service)
+        self.browser = browser
+        browser.delegate = self
+        browser.startBrowsingForPeers()
+    }
+
+    func join(_ peer: NearbyPeer) {
+        guard !hosting, !connected, selectedPeer == nil,
+              let actualPeer = discovered.first(where: { peerTokens[$0] == peer.id }),
+              let browser, let session else { return }
+        selectedPeer = actualPeer
+        browser.invitePeer(actualPeer, to: session, withContext: nil, timeout: 20)
+    }
+
+    func decideInvitation(accept: Bool) {
+        guard let pendingInvitation else { return }
+        self.pendingInvitation = nil
+        let allow = accept && hosting && session != nil
+        guard admission.resolve(accept: allow) else {
+            pendingInvitation.reply.respond(false, session: nil)
+            return
         }
-        XCTAssertEqual(accepted.count, 120)
-        limiter.reset()
-        XCTAssertTrue(limiter.allow(at: 100))
+        if allow { acceptedPeer = pendingInvitation.peer }
+        pendingInvitation.reply.respond(allow, session: allow ? session : nil)
+    }
+
+    func send(_ message: OutgoingMessage) {
+        guard connected, let session, let activePeer,
+              session.connectedPeers.count == 1,
+              session.connectedPeers.contains(activePeer) else { return }
+        do {
+            let encoded = try JSONEncoder().encode(message.packet)
+            guard encoded.count <= 4096 else { return }
+            try session.send(encoded, toPeers: [activePeer],
+                             with: message.quality == .reliable ? .reliable : .unreliable)
+        } catch {
+            if message.quality == .reliable {
+                // Never continue with apparently healthy game authority when
+                // a reliable score/handshake/control message cannot be sent.
+                stop()
+                onDisconnected?("Match ended: reliable network send failed.")
+            } else {
+                // Unreliable messages are superseded by the next state/input;
+                // a transient send failure must not open a modal SwiftUI alert
+                // every frame. Reliable control failures still tear down.
+            }
+        }
+    }
+
+    func stop() {
+        advertiser?.stopAdvertisingPeer()
+        advertiser?.delegate = nil
+        advertiser = nil
+        browser?.stopBrowsingForPeers()
+        browser?.delegate = nil
+        browser = nil
+        pendingInvitation?.reply.respond(false, session: nil)
+        pendingInvitation = nil
+        acceptedPeer = nil
+        selectedPeer = nil
+        activePeer = nil
+        admission.reset()
+        ingress.reset()
+        session?.disconnect()
+        session?.delegate = nil
+        session = nil
+        hosting = false
+        connected = false
+        discovered = []
+        peerTokens.removeAll()
+        onPeersChanged?([])
+    }
+
+    private func prepareSession() {
+        let session = MCSession(peer: localPeer, securityIdentity: nil,
+                                encryptionPreference: .required)
+        session.delegate = self
+        self.session = session
+    }
+
+    nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
+                                didReceiveInvitationFromPeer peerID: MCPeerID,
+                                withContext context: Data?,
+                                invitationHandler: @escaping (Bool, MCSession?) -> Void) {
+        let id = ObjectIdentifier(advertiser)
+        let peer = PeerReference(value: peerID)
+        let reply = InvitationReply(invitationHandler)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.advertiser,
+                  ObjectIdentifier(current) == id,
+                  self.hosting, !self.connected, self.acceptedPeer == nil,
+                  self.pendingInvitation == nil, self.session != nil,
+                  self.admission.offer() else {
+                reply.respond(false, session: nil)
+                return
+            }
+            self.pendingInvitation = (peer: peer.value, reply: reply)
+            self.onInvitation?(peer.value.displayName)
+        }
+    }
+
+    nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
+                                didNotStartAdvertisingPeer error: Error) {
+        let id = ObjectIdentifier(advertiser)
+        let reason = error.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.advertiser,
+                  ObjectIdentifier(current) == id else { return }
+            self.onDiscoveryFailed?(reason)
+        }
+    }
+
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID,
+                             withDiscoveryInfo info: [String: String]?) {
+        let id = ObjectIdentifier(browser)
+        let peer = PeerReference(value: peerID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            if !self.discovered.contains(peer.value) {
+                self.discovered.append(peer.value)
+                self.peerTokens[peer.value] = UUID()
+            }
+            self.onPeersChanged?(self.publishedPeers())
+        }
+    }
+
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+        let id = ObjectIdentifier(browser)
+        let peer = PeerReference(value: peerID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            self.discovered.removeAll { $0 == peer.value }
+            self.peerTokens.removeValue(forKey: peer.value)
+            self.onPeersChanged?(self.publishedPeers())
+        }
+    }
+
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser,
+                             didNotStartBrowsingForPeers error: Error) {
+        let id = ObjectIdentifier(browser)
+        let reason = error.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            self.onDiscoveryFailed?(reason)
+        }
+    }
+
+    nonisolated func session(_ session: MCSession, peer peerID: MCPeerID,
+                             didChange state: MCSessionState) {
+        let id = ObjectIdentifier(session)
+        let peer = PeerReference(value: peerID)
+        let stateCode = state.rawValue
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == id,
+                  let state = MCSessionState(rawValue: stateCode) else { return }
+            switch state {
+            case .connected:
+                guard current.connectedPeers.count == 1,
+                      (self.hosting
+                        ? (self.acceptedPeer == peer.value && self.admission.didConnect())
+                        : (self.selectedPeer == peer.value)) else {
+                    self.stop()
+                    self.onDisconnected?("Match ended: unexpected peer connection.")
+                    return
+                }
+                guard !self.connected else { return }
+                self.connected = true
+                self.activePeer = peer.value
+                self.browser?.stopBrowsingForPeers()
+                self.advertiser?.stopAdvertisingPeer()
+                self.onConnected?()
+            case .notConnected:
+                if self.connected, self.activePeer == peer.value {
+                    self.connected = false
+                    self.onDisconnected?("Peer disconnected. Start another match to play again.")
+                } else if self.hosting, self.acceptedPeer == peer.value {
+                    self.acceptedPeer = nil
+                    self.admission.reset()
+                }
+            case .connecting: break
+            @unknown default: break
+            }
+        }
+    }
+
+    nonisolated func session(_ session: MCSession, didReceive data: Data,
+                             fromPeer peerID: MCPeerID) {
+        // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
+        guard data.count <= 4096, canDecodePacket(),
+              let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
+        let id = ObjectIdentifier(session)
+        let peer = PeerReference(value: peerID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == id,
+                  self.connected, self.activePeer == peer.value,
+                  current.connectedPeers.count == 1,
+                  current.connectedPeers.contains(peer.value) else { return }
+            self.onPacket?(message)
+        }
+    }
+
+    /// p0ng's protocol has only bounded data packets. Streams and resource
+    /// transfers are outside the negotiated protocol and must never be accepted
+    /// merely because a peer joined an encrypted session.
+    nonisolated private func rejectUnexpectedChannel(sessionID: ObjectIdentifier) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == sessionID else { return }
+            self.stop()
+            self.onDisconnected?("Match ended: unsupported network channel.")
+        }
+    }
+
+    nonisolated func session(_ session: MCSession, didReceive stream: InputStream,
+                             withName streamName: String, fromPeer peerID: MCPeerID) {
+        stream.close()
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
+    }
+
+    nonisolated func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String,
+                             fromPeer peerID: MCPeerID, with progress: Progress) {
+        progress.cancel()
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
+    }
+
+    nonisolated func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String,
+                             fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
     }
 }

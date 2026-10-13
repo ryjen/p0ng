@@ -357,5 +357,5 @@ final class PongViewModel: ObservableObject {
         invitation = nil
     }
 
-    deinit { displayLink?.invalidate() }
+    isolated deinit { displayLink?.invalidate() }
 }

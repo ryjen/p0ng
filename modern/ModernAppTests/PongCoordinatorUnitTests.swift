@@ -90,6 +90,48 @@ final class PongCoordinatorUnitTests: XCTestCase {
                       "Leaving must clear stale discovered peers even if transport callback is absent")
     }
 
+    func testStaleDiscoveryAndSessionCallbacksDoNotReopenMenu() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.host()
+        model.leave()
+
+        let oldPeer = NearbyPeer(id: UUID(), displayName: "old-host")
+        network.onPeersChanged?([oldPeer])
+        network.onInvitation?("obsolete-request")
+        network.onError?("stale network send")
+        network.onDisconnected?("stale disconnection")
+        network.connected = true
+        network.onConnected?()
+
+        XCTAssertEqual(model.screen, .menu)
+        XCTAssertTrue(model.peers.isEmpty)
+        XCTAssertNil(model.invitation)
+        XCTAssertNil(model.message)
+        XCTAssertFalse(model.isDisplayClockRunning)
+    }
+
+    func testDelayedOldSessionCallbacksCannotCancelSoloGame() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.host()
+        model.leave()
+        model.playSolo()
+        let initial = model.state
+        network.connected = true
+        network.onConnected?()
+        network.onDisconnected?("obsolete disconnect")
+        network.onInvitation?("obsolete invite")
+        network.onPacket?(MatchMessage(kind: .snapshot, matchID: UUID(),
+                                      sequence: 42, state: PongSnapshot()))
+        XCTAssertEqual(model.screen, .playing)
+        XCTAssertEqual(model.roleLabel, "Solo · Left paddle")
+        XCTAssertEqual(model.state, initial)
+        XCTAssertNil(model.message)
+        XCTAssertNil(model.invitation)
+        XCTAssertTrue(model.isDisplayClockRunning)
+    }
+
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {
         let network = FakeTransport()
         let model = PongViewModel(transport: network)

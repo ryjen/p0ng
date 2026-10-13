@@ -3,8 +3,45 @@ import MultipeerConnectivity
 import UIKit
 import PongCore
 
+/// Immutable MCPeerID value crossing a legacy delegate-to-MainActor handoff.
+/// MCPeerID has no mutable public identity state; use it only on MainActor.
+private struct PeerReference: @unchecked Sendable {
+    let value: MCPeerID
+}
+
+/// Once-only response to an SDK invitation from an arbitrary callback queue.
+private final class InvitationReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: ((Bool, MCSession?) -> Void)?
+    init(_ handler: @escaping (Bool, MCSession?) -> Void) { self.handler = handler }
+    func respond(_ accepted: Bool, session: MCSession?) {
+        lock.lock()
+        let current = handler
+        handler = nil
+        lock.unlock()
+        current?(accepted, session)
+    }
+}
+
+/// The only mutable transport state accessed by delegate threads.
+private final class LockedPacketIngress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var window = PacketIngressWindow()
+    func allow(at time: TimeInterval) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return window.admit(at: time)
+    }
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        window.reset()
+    }
+}
+
 /// LAN transport for exactly two players. Intentionally no third-party relay or account.
 /// Callbacks are delivered on the main queue for the SwiftUI coordinator.
+@MainActor
 final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserDelegate,
                              MCNearbyServiceBrowserDelegate, MCSessionDelegate {
     private static let service = "p0ng-lan"
@@ -15,20 +52,15 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var browser: MCNearbyServiceBrowser?
     private(set) var hosting = false
     private(set) var connected = false
-    private var pendingInvitation: (peer: MCPeerID, handler: (Bool, MCSession?) -> Void)?
+    private var pendingInvitation: (peer: MCPeerID, reply: InvitationReply)?
     private var acceptedPeer: MCPeerID?
     private var selectedPeer: MCPeerID?
     private var activePeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
-    private let ingressLock = NSLock()
-    private var ingressWindow = PacketIngressWindow()
+    private let ingress = LockedPacketIngress()
 
-    /// MCSession delegates are delivered off-main. Limit decoding before
-    /// allocating messages and scheduling work onto the UI actor.
-    private func canDecodePacket() -> Bool {
-        ingressLock.lock()
-        defer { ingressLock.unlock() }
-        return ingressWindow.admit(at: ProcessInfo.processInfo.systemUptime)
+    nonisolated private func canDecodePacket() -> Bool {
+        ingress.allow(at: ProcessInfo.processInfo.systemUptime)
     }
 
     var onPeersChanged: (([NearbyPeer]) -> Void)?
@@ -82,11 +114,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         self.pendingInvitation = nil
         let allow = accept && hosting && session != nil
         guard admission.resolve(accept: allow) else {
-            pendingInvitation.handler(false, nil)
+            pendingInvitation.reply.respond(false, session: nil)
             return
         }
         if allow { acceptedPeer = pendingInvitation.peer }
-        pendingInvitation.handler(allow, allow ? session : nil)
+        pendingInvitation.reply.respond(allow, session: allow ? session : nil)
     }
 
     func send(_ message: OutgoingMessage) {
@@ -119,15 +151,13 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         browser?.stopBrowsingForPeers()
         browser?.delegate = nil
         browser = nil
-        pendingInvitation?.handler(false, nil)
+        pendingInvitation?.reply.respond(false, session: nil)
         pendingInvitation = nil
         acceptedPeer = nil
         selectedPeer = nil
         activePeer = nil
         admission.reset()
-        ingressLock.lock()
-        ingressWindow.reset()
-        ingressLock.unlock()
+        ingress.reset()
         session?.disconnect()
         session?.delegate = nil
         session = nil

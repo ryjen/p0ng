@@ -27,6 +27,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern
         SWIFT_VERSION: '6.0'
         SWIFT_STRICT_CONCURRENCY: complete
+        # Xcode 16.4's Swift compiler gates actor-safe CADisplayLink cleanup.
+        OTHER_SWIFT_FLAGS: '$(inherited) -enable-experimental-feature IsolatedDeinit'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: '1,2'
         CODE_SIGN_STYLE: Automatic

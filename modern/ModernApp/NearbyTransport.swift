@@ -63,13 +63,13 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         ingress.allow(at: ProcessInfo.processInfo.systemUptime)
     }
 
-    var onPeersChanged: (([NearbyPeer]) -> Void)?
-    var onInvitation: ((String) -> Void)?
-    var onConnected: (() -> Void)?
-    var onDisconnected: ((String) -> Void)?
-    var onPacket: ((MatchMessage) -> Void)?
-    var onError: ((String) -> Void)?
-    var onDiscoveryFailed: ((String) -> Void)?
+    var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
+    var onInvitation: (@MainActor @Sendable (String) -> Void)?
+    var onConnected: (@MainActor @Sendable () -> Void)?
+    var onDisconnected: (@MainActor @Sendable (String) -> Void)?
+    var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
+    var onError: (@MainActor @Sendable (String) -> Void)?
+    var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
     private var discovered: [MCPeerID] = []
     private var peerTokens: [MCPeerID: UUID] = [:]
 

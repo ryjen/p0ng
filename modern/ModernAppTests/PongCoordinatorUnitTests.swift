@@ -7,13 +7,13 @@ import PongCore
 final class PongCoordinatorUnitTests: XCTestCase {
     final class FakeTransport: GameTransport {
         var connected = false
-        var onPeersChanged: (([NearbyPeer]) -> Void)?
-        var onInvitation: ((String) -> Void)?
-        var onConnected: (() -> Void)?
-        var onDisconnected: ((String) -> Void)?
-        var onPacket: ((MatchMessage) -> Void)?
-        var onError: ((String) -> Void)?
-        var onDiscoveryFailed: ((String) -> Void)?
+        var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
+        var onInvitation: (@MainActor @Sendable (String) -> Void)?
+        var onConnected: (@MainActor @Sendable () -> Void)?
+        var onDisconnected: (@MainActor @Sendable (String) -> Void)?
+        var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
+        var onError: (@MainActor @Sendable (String) -> Void)?
+        var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
         var messages: [OutgoingMessage] = []
         var decisions: [Bool] = []
         var hostCalls = 0

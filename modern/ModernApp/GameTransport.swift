@@ -3,7 +3,7 @@ import PongCore
 
 /// Stable, transport-independent discovery identity for the current browse
 /// session. These IDs are ephemeral and are not proof of a physical identity.
-struct NearbyPeer: Identifiable, Hashable {
+struct NearbyPeer: Identifiable, Hashable, Sendable {
     let id: UUID
     let displayName: String
 }
@@ -14,13 +14,13 @@ struct NearbyPeer: Identifiable, Hashable {
 @MainActor
 protocol GameTransport: AnyObject {
     var connected: Bool { get }
-    var onPeersChanged: (@MainActor ([NearbyPeer]) -> Void)? { get set }
-    var onInvitation: (@MainActor (String) -> Void)? { get set }
-    var onConnected: (@MainActor () -> Void)? { get set }
-    var onDisconnected: (@MainActor (String) -> Void)? { get set }
-    var onPacket: (@MainActor (MatchMessage) -> Void)? { get set }
-    var onError: (@MainActor (String) -> Void)? { get set }
-    var onDiscoveryFailed: (@MainActor (String) -> Void)? { get set }
+    var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)? { get set }
+    var onInvitation: (@MainActor @Sendable (String) -> Void)? { get set }
+    var onConnected: (@MainActor @Sendable () -> Void)? { get set }
+    var onDisconnected: (@MainActor @Sendable (String) -> Void)? { get set }
+    var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)? { get set }
+    var onError: (@MainActor @Sendable (String) -> Void)? { get set }
+    var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)? { get set }
     func host()
     func browse()
     func join(_ peer: NearbyPeer)

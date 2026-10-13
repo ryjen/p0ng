@@ -6,7 +6,7 @@ on:
       - 'modern/**'
       - '.github/workflows/pong-core.yml'
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'modern/**'
       - '.github/workflows/pong-core.yml'

@@ -175,88 +175,106 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         self.session = session
     }
 
-    func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
-                    didReceiveInvitationFromPeer peerID: MCPeerID,
-                    withContext context: Data?,
-                    invitationHandler: @escaping (Bool, MCSession?) -> Void) {
+    nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
+                                didReceiveInvitationFromPeer peerID: MCPeerID,
+                                withContext context: Data?,
+                                invitationHandler: @escaping (Bool, MCSession?) -> Void) {
+        let id = ObjectIdentifier(advertiser)
+        let peer = PeerReference(value: peerID)
+        let reply = InvitationReply(invitationHandler)
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.advertiser === advertiser,
+            guard let self, let current = self.advertiser,
+                  ObjectIdentifier(current) == id,
                   self.hosting, !self.connected, self.acceptedPeer == nil,
-                  self.pendingInvitation == nil, self.session != nil else {
-                invitationHandler(false, nil)
+                  self.pendingInvitation == nil, self.session != nil,
+                  self.admission.offer() else {
+                reply.respond(false, session: nil)
                 return
             }
-            guard self.admission.offer() else {
-                invitationHandler(false, nil)
-                return
-            }
-            self.pendingInvitation = (peer: peerID, handler: invitationHandler)
-            self.onInvitation?(peerID.displayName)
+            self.pendingInvitation = (peer: peer.value, reply: reply)
+            self.onInvitation?(peer.value.displayName)
         }
     }
 
-    func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
+    nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
+                                didNotStartAdvertisingPeer error: Error) {
+        let id = ObjectIdentifier(advertiser)
+        let reason = error.localizedDescription
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.advertiser === advertiser else { return }
-            self.onDiscoveryFailed?(error.localizedDescription)
+            guard let self, let current = self.advertiser,
+                  ObjectIdentifier(current) == id else { return }
+            self.onDiscoveryFailed?(reason)
         }
     }
 
-    func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID,
-                 withDiscoveryInfo info: [String: String]?) {
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID,
+                             withDiscoveryInfo info: [String: String]?) {
+        let id = ObjectIdentifier(browser)
+        let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.browser === browser else { return }
-            if !self.discovered.contains(peerID) {
-                self.discovered.append(peerID)
-                self.peerTokens[peerID] = UUID()
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            if !self.discovered.contains(peer.value) {
+                self.discovered.append(peer.value)
+                self.peerTokens[peer.value] = UUID()
             }
             self.onPeersChanged?(self.publishedPeers())
         }
     }
 
-    func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+        let id = ObjectIdentifier(browser)
+        let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.browser === browser else { return }
-            self.discovered.removeAll { $0 == peerID }
-            self.peerTokens.removeValue(forKey: peerID)
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            self.discovered.removeAll { $0 == peer.value }
+            self.peerTokens.removeValue(forKey: peer.value)
             self.onPeersChanged?(self.publishedPeers())
         }
     }
 
-    func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser,
+                             didNotStartBrowsingForPeers error: Error) {
+        let id = ObjectIdentifier(browser)
+        let reason = error.localizedDescription
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.browser === browser else { return }
-            self.onDiscoveryFailed?(error.localizedDescription)
+            guard let self, let current = self.browser,
+                  ObjectIdentifier(current) == id else { return }
+            self.onDiscoveryFailed?(reason)
         }
     }
 
-    func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+    nonisolated func session(_ session: MCSession, peer peerID: MCPeerID,
+                             didChange state: MCSessionState) {
+        let id = ObjectIdentifier(session)
+        let peer = PeerReference(value: peerID)
+        let stateCode = state.rawValue
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.session === session else { return }
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == id,
+                  let state = MCSessionState(rawValue: stateCode) else { return }
             switch state {
             case .connected:
-                // The approved peer is the only one allowed to join a host.
-                // Any abnormal shutdown also tears down the game's authority.
-                guard session.connectedPeers.count == 1,
-                      self.hosting
-                        ? (self.acceptedPeer == peerID && self.admission.didConnect())
-                        : (self.selectedPeer == peerID) else {
+                guard current.connectedPeers.count == 1,
+                      (self.hosting
+                        ? (self.acceptedPeer == peer.value && self.admission.didConnect())
+                        : (self.selectedPeer == peer.value)) else {
                     self.stop()
                     self.onDisconnected?("Match ended: unexpected peer connection.")
                     return
                 }
-                guard !self.connected else { return } // duplicate callback
+                guard !self.connected else { return }
                 self.connected = true
-                self.activePeer = peerID
+                self.activePeer = peer.value
                 self.browser?.stopBrowsingForPeers()
                 self.advertiser?.stopAdvertisingPeer()
                 self.onConnected?()
             case .notConnected:
-                if self.connected, self.activePeer == peerID {
+                if self.connected, self.activePeer == peer.value {
                     self.connected = false
                     self.onDisconnected?("Peer disconnected. Start another match to play again.")
-                } else if self.hosting, self.acceptedPeer == peerID {
-                    // An accepted invitation failed before connecting; keep hosting.
+                } else if self.hosting, self.acceptedPeer == peer.value {
                     self.acceptedPeer = nil
                     self.admission.reset()
                 }
@@ -266,15 +284,19 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         }
     }
 
-    func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        // Reject oversized or unexpected messages before decoding or touching game state.
+    nonisolated func session(_ session: MCSession, didReceive data: Data,
+                             fromPeer peerID: MCPeerID) {
+        // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
         guard data.count <= 4096, canDecodePacket(),
               let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
+        let id = ObjectIdentifier(session)
+        let peer = PeerReference(value: peerID)
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.session === session,
-                  self.connected, self.activePeer == peerID,
-                  session.connectedPeers.count == 1,
-                  session.connectedPeers.contains(peerID) else { return }
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == id,
+                  self.connected, self.activePeer == peer.value,
+                  current.connectedPeers.count == 1,
+                  current.connectedPeers.contains(peer.value) else { return }
             self.onPacket?(message)
         }
     }
@@ -282,28 +304,29 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     /// p0ng's protocol has only bounded data packets. Streams and resource
     /// transfers are outside the negotiated protocol and must never be accepted
     /// merely because a peer joined an encrypted session.
-    private func rejectUnexpectedChannel(from source: MCSession) {
+    nonisolated private func rejectUnexpectedChannel(sessionID: ObjectIdentifier) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.session === source else { return }
+            guard let self, let current = self.session,
+                  ObjectIdentifier(current) == sessionID else { return }
             self.stop()
             self.onDisconnected?("Match ended: unsupported network channel.")
         }
     }
 
-    func session(_ session: MCSession, didReceive stream: InputStream,
-                 withName streamName: String, fromPeer peerID: MCPeerID) {
+    nonisolated func session(_ session: MCSession, didReceive stream: InputStream,
+                             withName streamName: String, fromPeer peerID: MCPeerID) {
         stream.close()
-        rejectUnexpectedChannel(from: session)
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
     }
 
-    func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String,
-                 fromPeer peerID: MCPeerID, with progress: Progress) {
+    nonisolated func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String,
+                             fromPeer peerID: MCPeerID, with progress: Progress) {
         progress.cancel()
-        rejectUnexpectedChannel(from: session)
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
     }
 
-    func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String,
-                 fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
-        rejectUnexpectedChannel(from: session)
+    nonisolated func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String,
+                             fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
+        rejectUnexpectedChannel(sessionID: ObjectIdentifier(session))
     }
 }

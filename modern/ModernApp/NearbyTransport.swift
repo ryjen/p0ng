@@ -105,7 +105,9 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 stop()
                 onDisconnected?("Match ended: reliable network send failed.")
             } else {
-                onError?("Realtime network packet dropped.")
+                // Unreliable messages are superseded by the next state/input;
+                // a transient send failure must not open a modal SwiftUI alert
+                // every frame. Reliable control failures still tear down.
             }
         }
     }

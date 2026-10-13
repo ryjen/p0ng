@@ -61,12 +61,21 @@ final class PongViewModel: ObservableObject {
 
     init(transport: GameTransport = NearbyTransport()) {
         self.transport = transport
-        transport.onPeersChanged = { [weak self] peers in self?.peers = peers }
-        transport.onInvitation = { [weak self] name in
-            self?.invitationID = UUID()
-            self?.invitation = name
+        // Old discovery callbacks must not repopulate menus after leave or a
+        // transition to a different match.
+        transport.onPeersChanged = { [weak self] peers in
+            guard let self, self.screen == .browsing else { return }
+            self.peers = peers
         }
-        transport.onError = { [weak self] problem in self?.message = problem }
+        transport.onInvitation = { [weak self] name in
+            guard let self, self.screen == .hosting, self.match.role == .host else { return }
+            self.invitationID = UUID()
+            self.invitation = name
+        }
+        transport.onError = { [weak self] problem in
+            guard let self, self.screen != .menu else { return }
+            self.message = problem
+        }
         transport.onDiscoveryFailed = { [weak self] problem in
             guard let self else { return }
             let mode: Screen
@@ -87,7 +96,9 @@ final class PongViewModel: ObservableObject {
             self.message = "Nearby discovery failed: \(problem)"
         }
         transport.onConnected = { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  (self.screen == .hosting && self.match.role == .host) ||
+                  (self.screen == .connecting && self.match.role == .guest) else { return }
             self.updateFrameActivity()
             if self.match.role == .guest {
                 self.screen = .connecting
@@ -96,7 +107,10 @@ final class PongViewModel: ObservableObject {
             self.lastHandshakeAt = CACurrentMediaTime()
         }
         transport.onDisconnected = { [weak self] reason in
-            guard let self else { return }
+            // A delayed previous-session error cannot cancel solo play or a
+            // newly returned-to-menu screen.
+            guard let self, self.screen != .menu,
+                  self.match.role == .host || self.match.role == .guest else { return }
             self.connectionAttempt = nil
             self.match.disconnect()
             self.resetMotion()
@@ -106,7 +120,7 @@ final class PongViewModel: ObservableObject {
             self.transport.stop()
         }
         transport.onPacket = { [weak self] packet in
-            guard let self else { return }
+            guard let self, self.match.role == .host || self.match.role == .guest else { return }
             let hadMatch = self.match.matchID != nil
             let wasReady = self.match.ready
             let handshake = self.match.acceptHandshake(packet)

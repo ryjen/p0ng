@@ -3,6 +3,23 @@ import Combine
 import QuartzCore
 import PongCore
 
+/// Keep CADisplayLink teardown off the view model's nonisolated deinit.
+/// The runloop owns the link, so invalidate on the main queue even if ARC
+/// releases the lifetime owner from another executor. Only MainActor code
+/// otherwise accesses the reference.
+private struct MainQueueDisplayLink: @unchecked Sendable {
+    let link: CADisplayLink
+}
+
+private final class DisplayLinkLifetime {
+    private let token: MainQueueDisplayLink
+    init(link: CADisplayLink) { token = MainQueueDisplayLink(link: link) }
+    deinit {
+        let token = token
+        DispatchQueue.main.async { token.link.invalidate() }
+    }
+}
+
 /// Weak proxy breaks CADisplayLink's retain cycle with its target.
 @MainActor
 private final class FrameTarget: NSObject {
@@ -26,6 +43,7 @@ final class PongViewModel: ObservableObject {
     private let transport: GameTransport
     private let frameTarget = FrameTarget()
     private var displayLink: CADisplayLink?
+    private var displayLinkLifetime: DisplayLinkLifetime?
     private var lastFrameTime: CFTimeInterval?
     private var interactive = true
     private var frameStepper = FrameStepper()
@@ -158,6 +176,7 @@ final class PongViewModel: ObservableObject {
         link.add(to: .main, forMode: .common)
         link.isPaused = true
         displayLink = link
+        displayLinkLifetime = DisplayLinkLifetime(link: link)
     }
 
     private func publish(_ snapshot: PongSnapshot) {
@@ -357,5 +376,4 @@ final class PongViewModel: ObservableObject {
         invitation = nil
     }
 
-    isolated deinit { displayLink?.invalidate() }
 }

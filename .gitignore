@@ -3,3 +3,10 @@ xcuserdata
 .idea
 build
 .build
+
+# Modern SwiftPM / XcodeGen outputs
+.swiftpm/
+modern/.build/
+modern/.swiftpm/
+modern/p0ng-modern.xcodeproj/
+modern/DerivedData/

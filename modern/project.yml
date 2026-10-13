@@ -1,0 +1,59 @@
+name: p0ng-modern
+options:
+  bundleIdPrefix: com.micrantha
+  deploymentTarget:
+    iOS: '17.0'
+packages:
+  PongCore:
+    path: .
+targets:
+  p0ng:
+    type: application
+    platform: iOS
+    sources:
+      - path: ModernApp
+        excludes: [Info.plist]
+    dependencies:
+      - package: PongCore
+        product: PongCore
+    scheme:
+      testTargets:
+        - p0ngUnitTests
+        - p0ngUITests
+    info:
+      path: ModernApp/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern
+        SWIFT_VERSION: '5.9'
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: '1,2'
+        CODE_SIGN_STYLE: Automatic
+
+  p0ngUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ModernUITests
+    dependencies:
+      - target: p0ng
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern.uitests
+        SWIFT_VERSION: '5.9'
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+
+  p0ngUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ModernAppTests
+    dependencies:
+      - target: p0ng
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern.tests
+        SWIFT_VERSION: '5.9'
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic

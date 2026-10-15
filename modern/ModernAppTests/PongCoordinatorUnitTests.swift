@@ -171,6 +171,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
         XCTAssertEqual(network.joinCalls, [stale])
         XCTAssertEqual(model.screen, .browsing)
+        XCTAssertTrue(model.peers.isEmpty, "Remove obsolete discovery token from the visible list")
         XCTAssertFalse(model.isDisplayClockRunning)
         XCTAssertFalse(model.isReady)
         XCTAssertEqual(model.message, "Host no longer available. Select another nearby host.")

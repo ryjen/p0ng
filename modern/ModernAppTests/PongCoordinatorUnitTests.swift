@@ -7,13 +7,13 @@ import PongCore
 final class PongCoordinatorUnitTests: XCTestCase {
     final class FakeTransport: GameTransport {
         var connected = false
-        var onPeersChanged: (([NearbyPeer]) -> Void)?
-        var onInvitation: ((String) -> Void)?
-        var onConnected: (() -> Void)?
-        var onDisconnected: ((String) -> Void)?
-        var onPacket: ((MatchMessage) -> Void)?
-        var onError: ((String) -> Void)?
-        var onDiscoveryFailed: ((String) -> Void)?
+        var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
+        var onInvitation: (@MainActor @Sendable (String) -> Void)?
+        var onConnected: (@MainActor @Sendable () -> Void)?
+        var onDisconnected: (@MainActor @Sendable (String) -> Void)?
+        var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
+        var onError: (@MainActor @Sendable (String) -> Void)?
+        var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
         var messages: [OutgoingMessage] = []
         var decisions: [Bool] = []
         var hostCalls = 0
@@ -165,5 +165,45 @@ extension PongCoordinatorUnitTests {
     func testLegacySoundResourcesArePackagedIntoModernApp() {
         XCTAssertNotNil(Bundle.main.url(forResource: "offthepaddle", withExtension: "wav"))
         XCTAssertNotNil(Bundle.main.url(forResource: "offthewall", withExtension: "wav"))
+    }
+}
+
+/// Exercises the actual ObjC-delegate crossing guards using adversarial,
+/// concurrent invocations without requiring Bluetooth/Wi-Fi or Apple accounts.
+extension PongCoordinatorUnitTests {
+    final class CallbackRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func record() {
+            lock.lock()
+            value += 1
+            lock.unlock()
+        }
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+    }
+
+    func testInvitationReplyFiresExactlyOnceWithConcurrentResolutions() {
+        let recorder = CallbackRecorder()
+        let reply = InvitationReply { _, _ in recorder.record() }
+        DispatchQueue.concurrentPerform(iterations: 48) { _ in
+            reply.respond(true, session: nil)
+        }
+        reply.respond(false, session: nil)
+        XCTAssertEqual(recorder.count, 1)
+    }
+
+    func testDelegatePacketBudgetIsRaceFreeAndResetsPerSession() {
+        let limiter = LockedPacketIngress()
+        let accepted = CallbackRecorder()
+        DispatchQueue.concurrentPerform(iterations: 256) { _ in
+            if limiter.allow(at: 100) { accepted.record() }
+        }
+        XCTAssertEqual(accepted.count, 120)
+        limiter.reset()
+        XCTAssertTrue(limiter.allow(at: 100))
     }
 }

@@ -1,14 +1,13 @@
-# p0ng — modernization branch
+# p0ng — modern iOS
 
-This is a standalone, modern iOS version of the original retro Pong game. The archived UIKit/XIB/SpriteKit implementation remains untouched in the original checkout for comparison.
+The `main` branch contains the experimental SwiftUI modernization and a Foundation-only Swift 6 `PongCore` package. The original UIKit/XIB/SpriteKit line remains preserved in legacy `master`; this is not yet a production-qualified multiplayer release.
 
 ## Run
 
-1. On macOS, install Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+1. On macOS, use **Xcode 16.4** with Swift 6 and [XcodeGen 2.46.0](https://github.com/yonaskolb/XcodeGen/releases/tag/2.46.0); CI pins both versions.
 2. Run `xcodegen generate --spec project.yml` and open `p0ng-modern.xcodeproj`.
-3. Select a development team for the iOS target and install on **two physical iOS devices**.
-4. On the first device select **Host nearby match**. On the second select **Join nearby match**, tap the host, and approve the invitation on the host.
-5. Grant Local Network permissions on both devices. Move the paddles by dragging vertically within the court.
+3. Use an **iOS Simulator** to validate launch, solo play and the nearby-host menu. Separately run `swift test` from this directory for portable protocol and game tests.
+4. **Final manual qualification, deferred until engineering is complete:** sign and install the app on two iOS 17+ devices, grant Local Network permission, host/join/approve, and record results in [VALIDATION.md](VALIDATION.md). This does not block continued work on `main`.
 
 A third choice, **Play against computer**, works without a network.
 
@@ -32,7 +31,7 @@ The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS 
 
 ## Performance candidate
 
-The active PR uses `CADisplayLink` for native display cadence instead of posting 60 new main-actor tasks per second. The host runs deterministic 60 Hz simulation in bounded catch-up steps. The guest interpolates render-only coordinates with a ~67 ms presentation delay; its own paddle is locally predicted, never used as authoritative ball/score state. Inputs are coalesced to 30 Hz and releases are reliable. These are hypotheses for better smoothness, **not measured improvements**; use two physical devices and compare frame/jitter metrics before claiming performance.
+The modern iOS app uses `CADisplayLink` for native display cadence instead of posting 60 new main-actor tasks per second. The host runs deterministic 60 Hz simulation in bounded catch-up steps. The guest interpolates render-only coordinates with a ~67 ms presentation delay; its own paddle is locally predicted, never used as authoritative ball/score state. Inputs are coalesced to 30 Hz and releases are reliable. These are hypotheses for better smoothness, **not measured improvements**; use two physical devices and compare frame/jitter metrics before claiming performance.
 
 ## Accessible input
 
@@ -46,3 +45,7 @@ and default on; toggles persist through native AppStorage. An inbound 120-messag
 second decoding budget protects the main UI actor from excessive peer traffic.
 Neither the icon's App Store metadata nor in-person audio/haptic behavior is
 claimed release-qualified until physical-device verification.
+
+## Swift 6 isolation boundary
+
+The modern iOS targets and portable `PongCore` compile in Swift 6 language mode. `GameTransport` and its UI callbacks are main-actor isolated; MultipeerConnectivity delegate callbacks remain nonisolated, decode bounded packets outside the UI actor, and hand off immutable identities and messages. Lock-protected callback state prevents duplicate invitation replies and packet admission races. Framework peer references are wrapped narrowly at that handoff because the SDK predates Swift Sendable annotations. Display-link cleanup is scheduled on the main queue without experimental compiler flags.

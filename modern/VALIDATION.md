@@ -9,7 +9,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
 - [x] Prior iOS simulator qualification: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38315987240)).
-- [ ] Verify current modernization head: 41 portable tests (including snapshot-arrival percentiles), iOS Simulator build, 10 native unit and 2 UI smoke cases. Tests are source/simulator qualification only; physical-network measurements remain deferred to the final release stage.
+- [x] Modern Swift 6 source-level qualification: **44/44 portable XCTest cases**, iOS Simulator build, **11/11 native coordinator/unit tests**, and **2/2 UI smoke tests** passed on [PR #13 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38780305505). These are not physical network measurements; the two-device gate remains deferred to final release qualification.
 - [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
@@ -25,12 +25,12 @@ This is an integration candidate. The Foundation game engine passes portable tes
 5. Disconnect host and guest separately, change Wi-Fi networks, background the app, and disable networking; verify the game does not continue with stale authority. A new match must require a new invitation.
 6. Test iPhone/iPad mixed screen sizes and portrait/landscape, ensuring normalized court coordinates and input still agree.
 7. Test slow/lossy networks using Network Link Conditioner, especially phase transitions and stale-snapshot rejection. Measure snapshot jitter and dropped inputs.
-8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state. Verify discovery startup failure returns to retryable menu, a single alert destination handles both invitations and network errors, and alert acceptance cannot be consumed by automatic dismissal. Verify multiple simultaneous invitations admit at most one peer, abnormal session termination resets game state, and callbacks queued before rehosting cannot authorize a new session.
+8. Verify protocol mismatch rejects the peer's messages, and invalid/oversized wire messages do not crash or alter game state. Verify discovery startup failure returns to retryable menu, a single alert destination handles both invitations and network errors, and alert acceptance cannot be consumed by automatic dismissal. Verify multiple simultaneous invitations admit at most one peer; an **unanswered invitation expires before the guest's 20-second timeout**, releasing its slot and clearing the alert; accepted matches must not be expired. Verify a failed reliable score/control send terminates the match instead of continuing with divergent authority. Abnormal session termination must reset game state, and callbacks queued before rehosting cannot authorize a new session.
 
 ## Security/operational notes
 
 - MCSession encryption is required but peer display names are not authenticated identities. Host approval is a consent gate, not cryptographic identity proof. This is sufficient for casual local play, not adversarial internet matchmaking.
-- Active MCSession traffic is restricted to the accepted peer; failed reliable sends and unexpected streams/resources terminate the session. Wire payloads are capped at 4 KiB and 120 packets/second before JSON decode. Host is sole authority. Future Network.framework framed stream helpers do not authenticate or encrypt, and GameKit is not enabled.
+- Active MCSession traffic is restricted to the accepted peer; an inconsistent active peer topology, oversize reliable control message, failed reliable send, or unexpected stream/resource channel terminates the session. Unanswered host invitations have token-scoped 18-second expiry so a stale request cannot monopolize admission. Received payloads are capped at 4 KiB and 120 packets/second before JSON decode. Host is sole authority. Future Network.framework framed stream helpers do not authenticate or encrypt, and GameKit is not enabled.
 - The application deliberately does not advertise while a match is active.
 - Packet sequence and match UUID reject stale or duplicate packets but do not implement a reconnect/resume token. Disconnect means a new match.
 - Do not deploy a relay, cloud backend, Game Center entitlement, or analytics service for the LAN slice.

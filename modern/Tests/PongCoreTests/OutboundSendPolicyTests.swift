@@ -23,7 +23,7 @@ final class OutboundSendPolicyTests: XCTestCase {
                 connected: true, singleAuthorizedPeer: true,
                 quality: .realtime, encodedByteCount: count), .ignore)
         }
-        for quality: SendQuality in [.reliable, .realtime] {
+        for quality in [SendQuality.reliable, .realtime] {
             XCTAssertEqual(OutboundSendPolicy.evaluate(
                 connected: true, singleAuthorizedPeer: true,
                 quality: quality, encodedByteCount: 4096), .transmit)

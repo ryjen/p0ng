@@ -4,7 +4,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 
 ## Build gates
 
-- [x] Modern `main` at `36d2d862` after PRs #19–#21: **51/51 portable Swift tests**, **14/14 native coordinator/unit tests**, and **3/3 iOS Simulator UI smoke tests** passed on [PR #21 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38813217541). These counts come from the completed workflow job logs; subsequent development heads require their own exact-head verification. This remains an integration candidate, not a signed/device-qualified release.
+- [x] Modern `main` at `2dceae86` after PRs #19–#22: **51/51 portable Swift tests**, **15/15 native coordinator/unit tests**, and **3/3 iOS Simulator UI smoke tests** passed on [PR #22 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38819580633). These counts come from the completed workflow job logs; subsequent development heads require their own exact-head verification. This remains an integration candidate, not a signed/device-qualified release.
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
@@ -20,6 +20,7 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [x] [PR #19](https://github.com/ryjen/p0ng/pull/19) returns a typed result for stale discovery tokens instead of leaving the guest in a connection attempt for an invitation that never started; two native coordinator regressions.
 - [x] [PR #20](https://github.com/ryjen/p0ng/pull/20) names fixed-step catch-up limits and adds deterministic 30/60/90/120Hz and variable-cadence portable tests; these are simulation invariants, not device performance measurements.
 - [x] [PR #21](https://github.com/ryjen/p0ng/pull/21) combines player role and left/right scores into a labeled VoiceOver scoreboard element; iOS Simulator UI test added.
+- [x] [PR #22](https://github.com/ryjen/p0ng/pull/22) routes the replay action using the typed match role instead of parsing display labels, with a native coordinator regression.
 - [ ] Two-device pairing, VoiceOver ergonomics, real frame timing/RTT and game feel remain unverified until the release gate.
 
 ## Diagnostics interpretation

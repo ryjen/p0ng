@@ -1,10 +1,10 @@
 # p0ng modernization: release qualification
 
-This is an integration candidate. The Foundation game engine passes portable tests and two native iOS Simulator XCTest UI smoke cases pass on GitHub-hosted macOS. This verifies launch/solo/menu behavior, **not** nearby peer discovery or actual multiplayer responsiveness. Two physical devices and baseline/comparison performance measurements remain required before release.
+This is an integration candidate. The Foundation game engine passes portable tests and three native iOS Simulator XCTest UI smoke cases pass on GitHub-hosted macOS. This verifies launch/solo/menu behavior, **not** nearby peer discovery or actual multiplayer responsiveness. Two physical devices and baseline/comparison performance measurements remain required before release.
 
 ## Build gates
 
-- [x] Current modern `main` source candidate (`27bad8e`, PRs #16 and #17 merged): **49/49 portable Swift tests**, **12/12 native coordinator/unit tests**, and **2/2 iOS Simulator UI smoke tests** passed on [PR #17 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38804095263). This remains an integration candidate, not a signed/device-qualified release.
+- [x] Modern `main` at `36d2d862` after PRs #19–#21: **51/51 portable Swift tests**, **14/14 native coordinator/unit tests**, and **3/3 iOS Simulator UI smoke tests** passed on [PR #21 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38813217541). These counts come from the completed workflow job logs; subsequent development heads require their own exact-head verification. This remains an integration candidate, not a signed/device-qualified release.
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
@@ -12,8 +12,15 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
-- [ ] Test VoiceOver adjustable paddle input, interrupted drags, accessibility contrast, inactive interruption and foreground recovery on actual iOS devices.
+- [ ] Test VoiceOver adjustable paddle input, the newly combined scoreboard announcement (player role and both scoring sides, [PR #21](https://github.com/ryjen/p0ng/pull/21)), interrupted drags, accessibility contrast, inactive interruption and foreground recovery on actual iOS devices.
 - [ ] At the **final physical-device acceptance stage**, capture DEBUG frame-gap p50/p95/p99, guest snapshot-gap p50/p95/p99, snapshot variation p95 and accepted-sequence gaps. Compare pre/post smoothing of ball and paddle on real devices. The snapshot metrics measure **arrival cadence**, not RTT, measured packet loss, or touch-to-visible latency. Source-level measurement code is verified in CI, but gameplay quality is not.
+
+## Pre-device source-level follow-ups
+
+- [x] [PR #19](https://github.com/ryjen/p0ng/pull/19) returns a typed result for stale discovery tokens instead of leaving the guest in a connection attempt for an invitation that never started; two native coordinator regressions.
+- [x] [PR #20](https://github.com/ryjen/p0ng/pull/20) names fixed-step catch-up limits and adds deterministic 30/60/90/120Hz and variable-cadence portable tests; these are simulation invariants, not device performance measurements.
+- [x] [PR #21](https://github.com/ryjen/p0ng/pull/21) combines player role and left/right scores into a labeled VoiceOver scoreboard element; iOS Simulator UI test added.
+- [ ] Two-device pairing, VoiceOver ergonomics, real frame timing/RTT and game feel remain unverified until the release gate.
 
 ## Diagnostics interpretation
 
@@ -23,7 +30,7 @@ PR #17 adds bounded, five-second aggregate DEBUG telemetry: frame and guest snap
 
 1. Install on two devices on the same LAN; accept Local Network permission. Verify host appears in guest's discovered list.
 2. Guest selects host; host must explicitly accept. Verify protocol-v2 `hello → welcome → ready → start → started` handshake, with late callback delivery, rejection, retries, message loss and duplicate packets. Host simulation must remain stopped until `started` is acknowledged. Reject then retry, and verify rejection does not start a game.
-3. Verify host controls **left**, guest controls **right**; both screens show the same left/right positions, scores, serves, and final winner. Solo mode must retain right-hand computer paddle.
+3. Verify host controls **left**, guest controls **right**; both screens show the same left/right positions, scores, serves, and final winner. Solo mode must retain right-hand computer paddle. Verify the VoiceOver scoreboard announces the appropriate player role and both side scores as they change.
 4. Verify rapid dragging, paddle edge clamping, serves, scoring, and game-over on both devices.
 5. Disconnect host and guest separately, change Wi-Fi networks, background the app, and disable networking; verify the game does not continue with stale authority. A new match must require a new invitation.
 6. Test iPhone/iPad mixed screen sizes and portrait/landscape, ensuring normalized court coordinates and input still agree.

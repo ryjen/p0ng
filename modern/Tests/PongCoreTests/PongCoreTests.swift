@@ -517,3 +517,30 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testSnapshotArrivalPercentilesIgnoreInvalidClocksAndBoundHistory() {
+        var arrival = SnapshotArrivalWindow(capacity: 4)
+        XCTAssertNil(arrival.summary())
+        for time in [10.0, 10.03, 10.063, 10.103, 10.15] {
+            arrival.observe(at: time)
+        }
+        arrival.observe(at: .nan)
+        arrival.observe(at: 10.15) // duplicate timestamp: not an interval
+        XCTAssertEqual(arrival.summary()!.p50Milliseconds, 33, accuracy: 0.001)
+        XCTAssertEqual(arrival.summary()!.p95Milliseconds, 47, accuracy: 0.001)
+        arrival.clearSamples()
+        XCTAssertNil(arrival.summary())
+        arrival.observe(at: 10.19)
+        XCTAssertEqual(arrival.summary()!.p50Milliseconds, 40, accuracy: 0.001)
+
+        arrival.observe(at: 9.0) // discontinuity invalidates old observations
+        XCTAssertNil(arrival.summary())
+        arrival.observe(at: 9.02)
+        XCTAssertEqual(arrival.summary()!.p95Milliseconds, 20, accuracy: 0.001)
+        arrival.reset()
+        XCTAssertNil(arrival.summary())
+        arrival.observe(at: 20)
+        XCTAssertNil(arrival.summary())
+    }
+}
+

@@ -9,12 +9,12 @@ This is an integration candidate. The Foundation game engine passes portable tes
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
 - [x] Prior iOS simulator qualification: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38315987240)).
-- [ ] Verify exact current head: 40 portable tests, iOS Simulator build, 6 native unit and 2 UI smoke cases.
+- [ ] Verify current modernization head: 41 portable tests (including snapshot-arrival percentiles), iOS Simulator build, 10 native unit and 2 UI smoke cases. Tests are source/simulator qualification only; physical-network measurements remain deferred to the final release stage.
 - [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 - [ ] Test VoiceOver adjustable paddle input, interrupted drags, accessibility contrast, inactive interruption and foreground recovery on actual iOS devices.
-- [ ] Measure DEBUG frame-gap p50/p95 and authoritative catch-up on real devices; compare pre/post smoothing for guest ball and local paddle. Local metrics code is implemented, but CI cannot demonstrate measured responsiveness.
+- [ ] Measure DEBUG frame-gap p50/p95 and guest snapshot-gap p50/p95 on real devices; compare pre/post smoothing for guest ball and local paddle. Snapshot-gap telemetry measures **arrival cadence**, not RTT, packet-loss percentage or input latency. Metrics code is implemented but CI cannot demonstrate measured responsiveness.
 
 ## Device acceptance matrix
 

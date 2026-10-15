@@ -79,7 +79,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var browser: MCNearbyServiceBrowser?
     private(set) var hosting = false
     private(set) var connected = false
-    private var pendingInvitation: (peer: MCPeerID, reply: InvitationReply)?
+    private var pendingInvitation: (id: UUID, peer: MCPeerID, reply: InvitationReply)?
     private var acceptedPeer: MCPeerID?
     private var selectedPeer: MCPeerID?
     private var activePeer: MCPeerID?
@@ -96,6 +96,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
 
     var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
     var onInvitation: (@MainActor @Sendable (String) -> Void)?
+    var onInvitationExpired: (@MainActor @Sendable () -> Void)?
     var onConnected: (@MainActor @Sendable () -> Void)?
     var onDisconnected: (@MainActor @Sendable (String) -> Void)?
     var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
@@ -248,8 +249,21 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 reply.respond(false, session: nil)
                 return
             }
-            self.pendingInvitation = (peer: peer.value, reply: reply)
+            let id = UUID()
+            self.pendingInvitation = (id: id, peer: peer.value, reply: reply)
             self.onInvitation?(peer.value.displayName)
+
+            // The browsing peer's invitation expires after 20 seconds. Do
+            // not keep this host's single admission slot occupied indefinitely
+            // if nobody responds or the UI remains in the background.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 18) { [weak self] in
+                guard let self, let pending = self.pendingInvitation,
+                      pending.id == id, self.hosting,
+                      self.admission.expire() else { return }
+                self.pendingInvitation = nil
+                pending.reply.respond(false, session: nil)
+                self.onInvitationExpired?()
+            }
         }
     }
 

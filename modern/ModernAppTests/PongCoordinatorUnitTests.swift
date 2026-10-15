@@ -10,6 +10,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
         var connected = false
         var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
         var onInvitation: (@MainActor @Sendable (String) -> Void)?
+        var onInvitationExpired: (@MainActor @Sendable () -> Void)?
         var onConnected: (@MainActor @Sendable () -> Void)?
         var onDisconnected: (@MainActor @Sendable (String) -> Void)?
         var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
@@ -26,6 +27,26 @@ final class PongCoordinatorUnitTests: XCTestCase {
         func decideInvitation(accept: Bool) { decisions.append(accept) }
         func send(_ message: OutgoingMessage) { messages.append(message) }
         func stop() { stops += 1; connected = false }
+    }
+
+    func testExpiredHostInvitationDismissesAlertAndAllowsNewRequest() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.host()
+        network.onInvitation?("visitor-1")
+        XCTAssertEqual(model.invitation, "visitor-1")
+        network.onInvitationExpired?()
+        XCTAssertNil(model.invitation)
+        XCTAssertNotNil(model.message)
+        model.message = nil
+        network.onInvitation?("visitor-2")
+        XCTAssertEqual(model.invitation, "visitor-2")
+        model.respondToInvitation(true)
+        XCTAssertNil(model.invitation)
+        XCTAssertEqual(network.decisions, [true])
+        // Delayed expiry from the old offer cannot clear a resolved request.
+        network.onInvitationExpired?()
+        XCTAssertNil(model.message)
     }
 
     func testHostInvitationAndDisconnectResetState() {

@@ -4,17 +4,20 @@ This is an integration candidate. The Foundation game engine passes portable tes
 
 ## Build gates
 
-- [x] 40 portable XCTest cases passed at candidate 1aaffbc: gameplay, deterministic network loss/reordering, frame timing, bounded stream frames and deterministic GameKit host election ([Actions run](https://github.com/ryjen/p0ng/actions/runs/38320299850)).
+- [x] Current modern `main` source candidate (`27bad8e`, PRs #16 and #17 merged): **49/49 portable Swift tests**, **12/12 native coordinator/unit tests**, and **2/2 iOS Simulator UI smoke tests** passed on [PR #17 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38804095263). This remains an integration candidate, not a signed/device-qualified release.
 - [x] Swift syntax parse and YAML parse
 - [x] `xcodegen generate` on GitHub-hosted macOS (workflow [p0ng validation](https://github.com/ryjen/p0ng/actions/workflows/pong-core.yml))
 - [x] iOS Simulator build on macOS (same workflow; unsigned Debug build)
-- [x] Prior iOS simulator qualification: 5 native coordinator/resource tests and 2 UI smoke cases ([run](https://github.com/ryjen/p0ng/actions/runs/38315987240)).
-- [x] Modern Swift 6 source-level qualification: **44/44 portable XCTest cases**, iOS Simulator build, **11/11 native coordinator/unit tests**, and **2/2 UI smoke tests** passed on [PR #13 exact-head CI](https://github.com/ryjen/p0ng/actions/runs/38780305505). These are not physical network measurements; the two-device gate remains deferred to final release qualification.
+- [x] Swift 6 complete-concurrency checks and language mode are enforced in portable and native builds. Legacy MultipeerConnectivity delegate handoffs use main-actor isolation with bounded locked ingress and invitation-response state.
 - [ ] Two physical-device LAN tests with recorded iOS versions, peer approval, genuine network jitter/loss, and failure recovery.
 - [ ] Xcode build on two physical devices (iOS 17+)
 - [ ] Two-device LAN gameplay qualification
 - [ ] Test VoiceOver adjustable paddle input, interrupted drags, accessibility contrast, inactive interruption and foreground recovery on actual iOS devices.
-- [ ] Measure DEBUG frame-gap p50/p95 and guest snapshot-gap p50/p95 on real devices; compare pre/post smoothing for guest ball and local paddle. Snapshot-gap telemetry measures **arrival cadence**, not RTT, packet-loss percentage or input latency. Metrics code is implemented but CI cannot demonstrate measured responsiveness.
+- [ ] At the **final physical-device acceptance stage**, capture DEBUG frame-gap p50/p95/p99, guest snapshot-gap p50/p95/p99, snapshot variation p95 and accepted-sequence gaps. Compare pre/post smoothing of ball and paddle on real devices. The snapshot metrics measure **arrival cadence**, not RTT, measured packet loss, or touch-to-visible latency. Source-level measurement code is verified in CI, but gameplay quality is not.
+
+## Diagnostics interpretation
+
+PR #17 adds bounded, five-second aggregate DEBUG telemetry: frame and guest snapshot-gap percentiles, guest snapshot interval variation and accepted-sequence gaps. Deliberate snapshot coalescing, old-message rejection, and network reordering can all create sequence gaps. **Do not interpret those gaps as measured packet loss**, or interarrival variation as true one-way latency/RTT. No peer identifiers or raw game packets are logged. These counters are available for later signed-device A/B testing; simulator success alone cannot qualify play feel.
 
 ## Device acceptance matrix
 

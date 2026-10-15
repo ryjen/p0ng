@@ -152,26 +152,52 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         pendingInvitation.reply.respond(allow, session: allow ? session : nil)
     }
 
+    /// Only a connected, explicitly admitted single peer may receive match
+    /// traffic. Reliable control failures cannot leave the host simulating
+    /// while the guest silently misses a score or phase transition.
+    private func failMatchDelivery(_ reason: String) {
+        stop()
+        onDisconnected?(reason)
+    }
+
     func send(_ message: OutgoingMessage) {
-        guard connected, let session, let activePeer,
-              session.connectedPeers.count == 1,
-              session.connectedPeers.contains(activePeer) else { return }
+        let singleAuthorizedPeer: Bool
+        if let session, let activePeer {
+            singleAuthorizedPeer = session.connectedPeers.count == 1 &&
+                session.connectedPeers.contains(activePeer)
+        } else {
+            singleAuthorizedPeer = false
+        }
+        switch OutboundSendPolicy.evaluate(connected: connected,
+                                           singleAuthorizedPeer: singleAuthorizedPeer,
+                                           quality: message.quality) {
+        case .ignore: return
+        case .terminate:
+            failMatchDelivery("Match ended: authorized peer unavailable.")
+            return
+        case .transmit: break
+        }
+
+        guard let session, let activePeer else { return }
         do {
             let encoded = try JSONEncoder().encode(message.packet)
-            guard encoded.count <= 4096 else { return }
+            switch OutboundSendPolicy.evaluate(connected: true,
+                                               singleAuthorizedPeer: true,
+                                               quality: message.quality,
+                                               encodedByteCount: encoded.count) {
+            case .ignore: return
+            case .terminate:
+                failMatchDelivery("Match ended: reliable packet exceeded the size limit.")
+                return
+            case .transmit: break
+            }
             try session.send(encoded, toPeers: [activePeer],
                              with: message.quality == .reliable ? .reliable : .unreliable)
         } catch {
             if message.quality == .reliable {
-                // Never continue with apparently healthy game authority when
-                // a reliable score/handshake/control message cannot be sent.
-                stop()
-                onDisconnected?("Match ended: reliable network send failed.")
-            } else {
-                // Unreliable messages are superseded by the next state/input;
-                // a transient send failure must not open a modal SwiftUI alert
-                // every frame. Reliable control failures still tear down.
+                failMatchDelivery("Match ended: reliable network send failed.")
             }
+            // Realtime data is replaceable, so a transient failure is ignored.
         }
     }
 

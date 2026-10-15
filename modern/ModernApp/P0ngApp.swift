@@ -84,11 +84,7 @@ struct PongHomeView: View {
                     if model.state.phase == .finished {
                         Text("\(model.state.leftScore > model.state.rightScore ? "LEFT" : "RIGHT") WINS")
                             .font(.title2.monospaced().bold())
-                        menuButton("Play again") {
-                            if model.isGuest { model.browse() }
-                            else if model.roleLabel.hasPrefix("Host") { model.host() }
-                            else { model.playSolo() }
-                        }
+                        menuButton("Play again", action: model.playAgain)
                     } else if model.state.phase == .serving {
                         Text("SERVE IN \(Int(ceil(model.state.serveRemaining)))")
                             .font(.headline.monospaced())

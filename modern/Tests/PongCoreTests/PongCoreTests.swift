@@ -593,3 +593,19 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testNearbySessionDeadlineOrderingAndSharedPacketLimit() {
+        // Host must expire an unanswered offer before MCSession invitation
+        // timeout. Guests can finish their own timeout before the host
+        // rotates an accepted-but-never-connected session.
+        XCTAssertGreaterThan(NearbySessionPolicy.unansweredInvitationDeadlineSeconds, 0)
+        XCTAssertLessThan(NearbySessionPolicy.unansweredInvitationDeadlineSeconds,
+                          NearbySessionPolicy.invitationTimeoutSeconds)
+        XCTAssertLessThan(NearbySessionPolicy.invitationTimeoutSeconds,
+                          NearbySessionPolicy.guestConnectionDeadlineSeconds)
+        XCTAssertLessThan(NearbySessionPolicy.guestConnectionDeadlineSeconds,
+                          NearbySessionPolicy.acceptedConnectionDeadlineSeconds)
+        XCTAssertEqual(OutboundSendPolicy.maximumBytes, MatchWireFraming.maximumPayloadBytes)
+    }
+}
+

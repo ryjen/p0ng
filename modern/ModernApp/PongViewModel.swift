@@ -175,7 +175,7 @@ final class PongViewModel: ObservableObject {
                 let arrival = CACurrentMediaTime()
                 self.interpolation.append(self.match.displayed, at: arrival)
                 #if DEBUG
-                self.debugSnapshotArrivals.observe(at: arrival)
+                self.debugSnapshotArrivals.observe(at: arrival, sequence: packet.sequence)
                 self.debugSnapshotCount += 1
                 #endif
                 // Presentation of received state happens on the next display refresh.
@@ -256,7 +256,8 @@ final class PongViewModel: ObservableObject {
             // No identifiers or packet contents are logged.
             let timing = debugFrameTimes.summary()
             let arrivals = debugSnapshotArrivals.summary()
-            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) frameP50ms=\(timing?.p50Milliseconds ?? 0) frameP95ms=\(timing?.p95Milliseconds ?? 0) snapshotGapP50ms=\(arrivals?.p50Milliseconds ?? 0) snapshotGapP95ms=\(arrivals?.p95Milliseconds ?? 0) discardedSimSeconds=\(frameStepper.discardedSeconds)")
+            let variation = debugSnapshotArrivals.variationSummary()
+            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) frameP50ms=\(timing?.p50Milliseconds ?? 0) frameP95ms=\(timing?.p95Milliseconds ?? 0) frameP99ms=\(timing?.p99Milliseconds ?? 0) snapshotGapP50ms=\(arrivals?.p50Milliseconds ?? 0) snapshotGapP95ms=\(arrivals?.p95Milliseconds ?? 0) snapshotGapP99ms=\(arrivals?.p99Milliseconds ?? 0) snapshotVariationP95ms=\(variation?.p95Milliseconds ?? 0) snapshotSequenceGaps=\(debugSnapshotArrivals.sequenceGaps) discardedSimSeconds=\(frameStepper.discardedSeconds)")
             debugFrameTimes.reset()
             debugSnapshotArrivals.clearSamples()
             debugFrameCount = 0

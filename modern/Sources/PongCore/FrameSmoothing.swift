@@ -233,50 +233,98 @@ public struct FrameTimingWindow {
         gaps.append(seconds)
     }
 
-    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double)? {
+    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double,
+                              p99Milliseconds: Double)? {
         guard !gaps.isEmpty else { return nil }
         let sorted = gaps.sorted()
         func quantile(_ fraction: Double) -> Double {
             let index = max(0, Int(ceil(fraction * Double(sorted.count))) - 1)
             return sorted[index] * 1000
         }
-        return (quantile(0.5), quantile(0.95))
+        return (quantile(0.5), quantile(0.95), quantile(0.99))
     }
 }
 
-/// Bounded guest snapshot inter-arrival measurements. Captures timing only:
-/// this is *not* network RTT or touch-to-visible latency.
+/// Bounded guest snapshot inter-arrival and variation diagnostics.
+/// This does NOT measure network RTT or touch-to-visible latency. Gaps in
+/// accepted authoritative sequences also include deliberate coalescing and
+/// out-of-order discards, so they MUST NOT be called measured packet loss.
 public struct SnapshotArrivalWindow {
     private var lastArrival: Double?
+    private var previousGap: Double?
+    private var lastSequence: UInt64?
     private var intervals: FrameTimingWindow
+    private var variations: FrameTimingWindow
+    public private(set) var sequenceGaps: UInt64 = 0
+    public private(set) var staleSequences: UInt64 = 0
 
     public init(capacity: Int = 360) {
         intervals = FrameTimingWindow(capacity: capacity)
+        variations = FrameTimingWindow(capacity: capacity)
     }
 
-    public mutating func observe(at time: Double) {
+    public mutating func observe(at time: Double, sequence: UInt64? = nil) {
         guard time.isFinite else { return }
+        if let sequence {
+            guard sequence > 0 else { return }
+            if let previous = lastSequence {
+                guard sequence > previous else {
+                    staleSequences &+= 1
+                    return
+                }
+                let delta = sequence - previous - 1
+                sequenceGaps = sequenceGaps > UInt64.max - delta
+                    ? UInt64.max : sequenceGaps + delta
+            }
+            lastSequence = sequence
+        }
         if let previous = lastArrival {
             if time < previous {
-                intervals.reset() // Monotonic clock reset/session discontinuity
+                intervals.reset()
+                variations.reset()
+                previousGap = nil
             } else if time > previous {
-                intervals.add(time - previous)
+                let gap = time - previous
+                if gap < 1 {
+                    intervals.add(gap)
+                    if let previousGap {
+                        let difference = abs(gap - previousGap)
+                        if difference > 0 { variations.add(difference) }
+                    }
+                    previousGap = gap
+                } else {
+                    // A long pause is a session discontinuity, not link jitter.
+                    previousGap = nil
+                }
             }
         }
         lastArrival = time
     }
 
-    /// Preserve the last timestamp across periodic reports; next sample still
-    /// contributes its inter-arrival interval without retaining old samples.
-    public mutating func clearSamples() { intervals.reset() }
-
-    public mutating func reset() {
+    /// Retains continuity across reports without retaining old raw samples.
+    public mutating func clearSamples() {
         intervals.reset()
-        lastArrival = nil
+        variations.reset()
+        sequenceGaps = 0
+        staleSequences = 0
     }
 
-    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double)? {
+    public mutating func reset() {
+        clearSamples()
+        lastArrival = nil
+        previousGap = nil
+        lastSequence = nil
+    }
+
+    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double,
+                               p99Milliseconds: Double)? {
         intervals.summary()
+    }
+
+    public func variationSummary() -> (p50Milliseconds: Double,
+                                        p95Milliseconds: Double,
+                                        p99Milliseconds: Double)? {
+        variations.summary()
     }
 }
 

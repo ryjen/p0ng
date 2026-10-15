@@ -609,3 +609,41 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testSnapshotArrivalVariationAndSequenceGapsAreBoundedAndPrivate() {
+        var window = SnapshotArrivalWindow(capacity: 4)
+        window.observe(at: 10.0, sequence: 100)
+        window.observe(at: 10.03, sequence: 101)
+        window.observe(at: 10.07, sequence: 104)
+        window.observe(at: 10.10, sequence: 103) // stale, must not affect timing
+        window.observe(at: 10.12, sequence: 105)
+        XCTAssertEqual(window.sequenceGaps, 2)
+        XCTAssertEqual(window.staleSequences, 1)
+        XCTAssertEqual(window.summary()!.p50Milliseconds, 40, accuracy: 0.001)
+        XCTAssertEqual(window.summary()!.p99Milliseconds, 50, accuracy: 0.001)
+        XCTAssertEqual(window.variationSummary()!.p95Milliseconds, 10, accuracy: 0.001)
+        window.clearSamples()
+        XCTAssertNil(window.summary())
+        XCTAssertNil(window.variationSummary())
+        XCTAssertEqual(window.sequenceGaps, 0)
+        window.observe(at: 10.15, sequence: 106)
+        XCTAssertEqual(window.summary()!.p50Milliseconds, 30, accuracy: 0.001)
+        window.reset()
+        XCTAssertEqual(window.staleSequences, 0)
+        XCTAssertNil(window.summary())
+    }
+
+    func testSnapshotArrivalIgnoresLongPauseAndSequenceCounterSaturates() {
+        var window = SnapshotArrivalWindow(capacity: 2)
+        window.observe(at: 1, sequence: 1)
+        window.observe(at: 1.03, sequence: UInt64.max)
+        XCTAssertEqual(window.sequenceGaps, UInt64.max - 2)
+        window.observe(at: 4.03) // no jitter spike from background pause
+        XCTAssertNil(window.variationSummary())
+        window.observe(at: 4.06)
+        XCTAssertNil(window.variationSummary())
+        window.observe(at: 4.10)
+        XCTAssertEqual(window.variationSummary()!.p95Milliseconds, 10, accuracy: 0.001)
+    }
+}
+

@@ -1,4 +1,5 @@
 import XCTest
+import MultipeerConnectivity
 import PongCore
 @testable import p0ng
 

@@ -136,12 +136,13 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         browser.startBrowsingForPeers()
     }
 
-    func join(_ peer: NearbyPeer) {
+    func join(_ peer: NearbyPeer) -> NearbyJoinResult {
         guard !hosting, !connected, selectedPeer == nil,
               let actualPeer = discovered.first(where: { peerTokens[$0] == peer.id }),
-              let browser, let session else { return }
+              let browser, let session else { return .unavailable }
         selectedPeer = actualPeer
         browser.invitePeer(actualPeer, to: session, withContext: nil, timeout: NearbySessionPolicy.invitationTimeoutSeconds)
+        return .invitationSent
     }
 
     func decideInvitation(accept: Bool) {

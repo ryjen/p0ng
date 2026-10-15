@@ -24,6 +24,22 @@ final class P0ngSmokeUITests: XCTestCase {
     }
 
     @MainActor
+    func testSoloScoreboardAnnouncesBothScoringSides() {
+        let app = XCUIApplication()
+        app.launch()
+        let play = app.buttons["Play against computer"]
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        play.tap()
+
+        let scoreboard = app.descendants(matching: .any)["pong.scoreboard"]
+        XCTAssertTrue(scoreboard.waitForExistence(timeout: 8))
+        XCTAssertEqual(scoreboard.label, "Scoreboard")
+        let announced = scoreboard.value as? String ?? ""
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("left"))
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("right"))
+    }
+
+    @MainActor
     func testMenuContainsNearbyModes() {
         let app = XCUIApplication()
         app.launch()

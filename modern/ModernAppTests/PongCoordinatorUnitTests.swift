@@ -54,6 +54,35 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertNil(model.message)
     }
 
+    func testPlayAgainRoutesUsingTypedMatchRole() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+
+        // Solo rematch must never begin network discovery.
+        model.playSolo()
+        model.playAgain()
+        XCTAssertEqual(model.screen, .playing)
+        XCTAssertEqual(model.roleLabel, "Solo · Left paddle")
+        XCTAssertEqual(network.hostCalls, 0)
+        XCTAssertEqual(network.browseCalls, 0)
+
+        // Host/guest rematches follow session role, not presentation copy.
+        model.host()
+        model.playAgain()
+        XCTAssertEqual(model.screen, .hosting)
+        XCTAssertEqual(network.hostCalls, 2)
+        XCTAssertEqual(network.browseCalls, 0)
+
+        model.browse()
+        model.playAgain()
+        XCTAssertEqual(model.screen, .browsing)
+        XCTAssertEqual(network.browseCalls, 2)
+
+        model.leave()
+        model.playAgain()
+        XCTAssertEqual(model.screen, .menu)
+    }
+
     func testHostInvitationAndDisconnectResetState() {
         let network = FakeTransport()
         let model = PongViewModel(transport: network)

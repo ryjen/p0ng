@@ -8,6 +8,13 @@ struct NearbyPeer: Identifiable, Hashable, Sendable {
     let displayName: String
 }
 
+/// Synchronous initiation only; it does not indicate that a peer connected.
+/// In particular, ephemeral discovery tokens may expire before selection.
+enum NearbyJoinResult: Sendable, Equatable {
+    case invitationSent
+    case unavailable
+}
+
 /// Callbacks are delivered on the main queue, and the implementation owns
 /// discovery/session invalidation. No UI type or MCPeerID leaks into consumers.
 /// A fake can simulate protocol failures without physical devices.
@@ -24,7 +31,7 @@ protocol GameTransport: AnyObject {
     var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)? { get set }
     func host()
     func browse()
-    func join(_ peer: NearbyPeer)
+    func join(_ peer: NearbyPeer) -> NearbyJoinResult
     func decideInvitation(accept: Bool)
     func send(_ message: OutgoingMessage)
     func stop()

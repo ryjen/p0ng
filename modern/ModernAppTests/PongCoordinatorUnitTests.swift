@@ -20,10 +20,15 @@ final class PongCoordinatorUnitTests: XCTestCase {
         var decisions: [Bool] = []
         var hostCalls = 0
         var browseCalls = 0
+        var joinResult: NearbyJoinResult = .invitationSent
+        var joinCalls: [NearbyPeer] = []
         var stops = 0
         func host() { hostCalls += 1 }
         func browse() { browseCalls += 1 }
-        func join(_ peer: NearbyPeer) {}
+        func join(_ peer: NearbyPeer) -> NearbyJoinResult {
+            joinCalls.append(peer)
+            return joinResult
+        }
         func decideInvitation(accept: Bool) { decisions.append(accept) }
         func send(_ message: OutgoingMessage) { messages.append(message) }
         func stop() { stops += 1; connected = false }
@@ -152,6 +157,41 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertNil(model.message)
         XCTAssertNil(model.invitation)
         XCTAssertTrue(model.isDisplayClockRunning)
+    }
+
+    func testStaleDiscoveryTokenRejectsJoinImmediatelyAndKeepsBrowsing() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.browse()
+        let stale = NearbyPeer(id: UUID(), displayName: "expired-host")
+        network.onPeersChanged?([stale])
+        network.joinResult = .unavailable
+
+        model.join(stale)
+
+        XCTAssertEqual(network.joinCalls, [stale])
+        XCTAssertEqual(model.screen, .browsing)
+        XCTAssertTrue(model.peers.isEmpty, "Remove obsolete discovery token from the visible list")
+        XCTAssertFalse(model.isDisplayClockRunning)
+        XCTAssertFalse(model.isReady)
+        XCTAssertEqual(model.message, "Host no longer available. Select another nearby host.")
+        XCTAssertEqual(network.browseCalls, 1, "Browsing must not rotate its session")
+        XCTAssertEqual(network.stops, 1, "Rejected join must not stop discovery")
+    }
+
+    func testValidJoinInitiatesConnectionWithoutPrematureFailureAlert() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.browse()
+        let peer = NearbyPeer(id: UUID(), displayName: "available-host")
+        network.onPeersChanged?([peer])
+
+        model.join(peer)
+
+        XCTAssertEqual(network.joinCalls, [peer])
+        XCTAssertEqual(model.screen, .connecting)
+        XCTAssertNil(model.message)
+        XCTAssertFalse(model.isReady)
     }
 
     func testGuestConnectionFailureBeforeHandshakeReturnsToRetryableMenu() {

@@ -15,7 +15,8 @@ final class P0ngSmokeUITests: XCTestCase {
         XCTAssertTrue(play.waitForExistence(timeout: 15), "Game menu must launch")
 
         play.tap()
-        XCTAssertTrue(app.staticTexts["Solo · Left paddle"].waitForExistence(timeout: 8))
+        // The score and role are intentionally one accessible scoreboard element.
+        XCTAssertTrue(app.descendants(matching: .any)["pong.scoreboard"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Exit"].exists)
 
         app.buttons["Exit"].tap()

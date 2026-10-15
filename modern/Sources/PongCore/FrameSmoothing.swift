@@ -3,7 +3,15 @@ import Foundation
 /// Accumulates elapsed display time into deterministic host physics ticks.
 /// A long foreground stall is discarded beyond a bounded catch-up budget.
 public struct FrameStepper {
-    public static let step = 1.0 / 60.0
+    // The simulation runs at a fixed rate independent of native screen refresh.
+    private static let simulationTicksPerSecond = 60.0
+    private static let maximumCatchUpTicks = 6
+    // Avoid dropping a tick solely because floating-point accumulation is
+    // infinitesimally below an exact step boundary.
+    private static let tickRoundingToleranceSeconds = 1e-9
+
+    public static let step = 1.0 / simulationTicksPerSecond
+    private static let maximumCatchUpSeconds = Double(maximumCatchUpTicks) * step
     public private(set) var accumulator = 0.0
     public private(set) var discardedSeconds = 0.0
 
@@ -16,11 +24,11 @@ public struct FrameStepper {
 
     public mutating func advance(elapsed: Double) -> Int {
         guard elapsed.isFinite, elapsed > 0 else { return 0 }
-        let bounded = min(elapsed, 0.1)
+        let bounded = min(elapsed, Self.maximumCatchUpSeconds)
         discardedSeconds += max(0, elapsed - bounded)
         accumulator += bounded
-        let available = Int((accumulator + 1e-9) / Self.step)
-        let ticks = min(available, 6)
+        let available = Int((accumulator + Self.tickRoundingToleranceSeconds) / Self.step)
+        let ticks = min(available, Self.maximumCatchUpTicks)
         accumulator -= Double(ticks) * Self.step
         // Never build an unbounded backlog under persistent overload.
         if accumulator >= Self.step {

@@ -370,6 +370,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                     // the single-peer admission slot until the timer fires.
                     self.acceptedAttemptID = nil
                     self.host() // new SDK session rejects late old callbacks
+                } else if !self.hosting, self.selectedPeer == peer.value {
+                    // Explicit rejection/failure should return immediately,
+                    // not wait for the UI's final 23s connection deadline.
+                    self.stop()
+                    self.onDisconnected?("Host unavailable or declined. Browse to retry.")
                 }
             case .connecting: break
             @unknown default: break

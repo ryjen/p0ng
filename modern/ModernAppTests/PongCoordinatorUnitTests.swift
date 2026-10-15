@@ -154,6 +154,23 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertTrue(model.isDisplayClockRunning)
     }
 
+    func testGuestConnectionFailureBeforeHandshakeReturnsToRetryableMenu() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.browse()
+        let peer = NearbyPeer(id: UUID(), displayName: "host")
+        network.onPeersChanged?([peer])
+        model.join(peer)
+        XCTAssertEqual(model.screen, .connecting)
+        network.onDisconnected?("Host unavailable or declined. Browse to retry.")
+        XCTAssertEqual(model.screen, .menu)
+        XCTAssertFalse(model.isReady)
+        XCTAssertFalse(model.isDisplayClockRunning)
+        XCTAssertTrue(model.peers.isEmpty)
+        XCTAssertEqual(model.message, "Host unavailable or declined. Browse to retry.")
+        XCTAssertGreaterThan(network.stops, 0)
+    }
+
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {
         let network = FakeTransport()
         let model = PongViewModel(transport: network)

@@ -327,7 +327,14 @@ final class PongViewModel: ObservableObject {
         screen = .connecting
         let attempt = UUID()
         connectionAttempt = attempt
-        transport.join(peer)
+        guard transport.join(peer) == .invitationSent else {
+            // A discovered peer may disappear before the user selects it.
+            // Do not start a connection timeout for an invitation never sent.
+            connectionAttempt = nil
+            screen = .browsing
+            message = "Host no longer available. Select another nearby host."
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.guestConnectionDeadlineSeconds) { [weak self] in
             guard let self, self.connectionAttempt == attempt,
                   self.screen == .connecting, !self.match.ready else { return }

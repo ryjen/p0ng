@@ -35,14 +35,33 @@ final class InvitationReply: @unchecked Sendable {
 final class LockedPacketIngress: @unchecked Sendable {
     private let lock = NSLock()
     private var window = PacketIngressWindow()
-    func allow(at time: TimeInterval) -> Bool {
+    // Both SDK references are inspected only while holding the lock. Retaining
+    // the actual session prevents stale pointer/identity reuse across matches.
+    private var session: MCSession?
+    private var peer: MCPeerID?
+
+    func authorize(session: MCSession, peer: MCPeerID) {
         lock.lock()
         defer { lock.unlock() }
+        window.reset()
+        self.session = session
+        self.peer = peer
+    }
+
+    func allow(session candidate: MCSession, from sender: MCPeerID,
+               at time: TimeInterval) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let session, session === candidate,
+              let peer, peer == sender else { return false }
         return window.admit(at: time)
     }
+
     func reset() {
         lock.lock()
         defer { lock.unlock() }
+        session = nil
+        peer = nil
         window.reset()
     }
 }
@@ -67,8 +86,12 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var admission = NearbyAdmissionGate()
     private let ingress = LockedPacketIngress()
 
-    nonisolated private func canDecodePacket() -> Bool {
-        ingress.allow(at: ProcessInfo.processInfo.systemUptime)
+    nonisolated private func canDecodePacket(from peer: MCPeerID,
+                                              in session: MCSession) -> Bool {
+        // Check the admitted peer BEFORE JSON decoding or consuming rate quota.
+        // Unexpected peers cannot starve the authorized player's packet budget.
+        ingress.allow(session: session, from: peer,
+                      at: ProcessInfo.processInfo.systemUptime)
     }
 
     var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
@@ -275,12 +298,14 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 guard !self.connected else { return }
                 self.connected = true
                 self.activePeer = peer.value
+                self.ingress.authorize(session: current, peer: peer.value)
                 self.browser?.stopBrowsingForPeers()
                 self.advertiser?.stopAdvertisingPeer()
                 self.onConnected?()
             case .notConnected:
                 if self.connected, self.activePeer == peer.value {
                     self.connected = false
+                    self.ingress.reset()
                     self.onDisconnected?("Peer disconnected. Start another match to play again.")
                 } else if self.hosting, self.acceptedPeer == peer.value {
                     self.acceptedPeer = nil
@@ -295,7 +320,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     nonisolated func session(_ session: MCSession, didReceive data: Data,
                              fromPeer peerID: MCPeerID) {
         // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
-        guard data.count <= 4096, canDecodePacket(),
+        guard data.count <= 4096, canDecodePacket(from: peerID, in: session),
               let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
         let sdk = SDKReference(value: session)
         let peer = PeerReference(value: peerID)

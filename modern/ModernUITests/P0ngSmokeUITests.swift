@@ -6,6 +6,7 @@ final class P0ngSmokeUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    @MainActor
     func testLaunchSoloPlayAndExit() {
         let app = XCUIApplication()
         app.launch()
@@ -22,6 +23,7 @@ final class P0ngSmokeUITests: XCTestCase {
                       "Returning to the menu must stop solo play")
     }
 
+    @MainActor
     func testMenuContainsNearbyModes() {
         let app = XCUIApplication()
         app.launch()

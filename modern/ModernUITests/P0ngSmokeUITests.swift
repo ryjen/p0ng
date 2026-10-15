@@ -37,6 +37,8 @@ final class P0ngSmokeUITests: XCTestCase {
         let announced = scoreboard.value as? String ?? ""
         XCTAssertTrue(announced.localizedCaseInsensitiveContains("left"))
         XCTAssertTrue(announced.localizedCaseInsensitiveContains("right"))
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("solo"),
+                      "Combining score elements must not hide the current player role")
     }
 
     @MainActor

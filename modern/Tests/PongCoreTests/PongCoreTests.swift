@@ -560,3 +560,36 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testAcceptedButUnconnectedPeerCanExpireWithoutRevokingLiveMatch() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertFalse(gate.expireUnconnectedAcceptance())
+        XCTAssertTrue(gate.offer())
+        XCTAssertFalse(gate.expireUnconnectedAcceptance(),
+                       "Host approval must not be timed out before a decision")
+        XCTAssertTrue(gate.resolve(accept: true))
+        XCTAssertTrue(gate.expireUnconnectedAcceptance(),
+                      "A stalled accepted invitation must free the host")
+        XCTAssertEqual(gate.state, .available)
+        XCTAssertFalse(gate.didConnect(), "Late connected callback cannot restore authority")
+        XCTAssertTrue(gate.offer(), "Hosting must accept a subsequent invitation")
+        XCTAssertTrue(gate.resolve(accept: true))
+        XCTAssertTrue(gate.didConnect())
+        XCTAssertFalse(gate.expireUnconnectedAcceptance(),
+                       "A previously accepted match must never be expired while connected")
+        XCTAssertEqual(gate.state, .connected)
+    }
+
+    func testAcceptedConnectionExpiryIsDistinctFromUnansweredOfferExpiry() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertTrue(gate.offer())
+        XCTAssertTrue(gate.expire())
+        XCTAssertFalse(gate.expireUnconnectedAcceptance())
+        XCTAssertTrue(gate.offer())
+        XCTAssertTrue(gate.resolve(accept: true))
+        XCTAssertFalse(gate.expire(), "Unanswered timer cannot expire accepted consent")
+        XCTAssertTrue(gate.expireUnconnectedAcceptance(),
+                      "Connect timer can revoke only an unconnected accepted attempt")
+    }
+}
+

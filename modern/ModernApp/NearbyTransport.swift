@@ -81,6 +81,9 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private(set) var connected = false
     private var pendingInvitation: (id: UUID, peer: MCPeerID, reply: InvitationReply)?
     private var acceptedPeer: MCPeerID?
+    /// Separate from the unanswered-invitation token. Accepted-but-stalled
+    /// connections get a bounded recovery without expiring live matches.
+    private var acceptedAttemptID: UUID?
     private var selectedPeer: MCPeerID?
     private var activePeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
@@ -149,7 +152,20 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             pendingInvitation.reply.respond(false, session: nil)
             return
         }
-        if allow { acceptedPeer = pendingInvitation.peer }
+        if allow {
+            acceptedPeer = pendingInvitation.peer
+            let attempt = UUID()
+            acceptedAttemptID = attempt
+            // An unanswered request expires at 18s. Once accepted, allow a
+            // separate 25s connection window before rotating the old session.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+                guard let self, self.acceptedAttemptID == attempt,
+                      self.hosting, !self.connected,
+                      self.admission.expireUnconnectedAcceptance() else { return }
+                self.host() // revoke the stale MCSession and resume advertising
+                self.onError?("Guest did not connect. Hosting restarted; try again.")
+            }
+        }
         pendingInvitation.reply.respond(allow, session: allow ? session : nil)
     }
 
@@ -212,6 +228,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         pendingInvitation?.reply.respond(false, session: nil)
         pendingInvitation = nil
         acceptedPeer = nil
+        acceptedAttemptID = nil
         selectedPeer = nil
         activePeer = nil
         admission.reset()
@@ -337,6 +354,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 }
                 guard !self.connected else { return }
                 self.connected = true
+                self.acceptedAttemptID = nil
                 self.activePeer = peer.value
                 self.ingress.authorize(session: current, peer: peer.value)
                 self.browser?.stopBrowsingForPeers()
@@ -348,8 +366,10 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                     self.ingress.reset()
                     self.onDisconnected?("Peer disconnected. Start another match to play again.")
                 } else if self.hosting, self.acceptedPeer == peer.value {
-                    self.acceptedPeer = nil
-                    self.admission.reset()
+                    // A rejected or failed accepted connection cannot block
+                    // the single-peer admission slot until the timer fires.
+                    self.acceptedAttemptID = nil
+                    self.host() // new SDK session rejects late old callbacks
                 }
             case .connecting: break
             @unknown default: break

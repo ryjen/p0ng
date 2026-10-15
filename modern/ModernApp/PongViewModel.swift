@@ -138,6 +138,9 @@ final class PongViewModel: ObservableObject {
             guard let self, self.screen != .menu,
                   self.match.role == .host || self.match.role == .guest else { return }
             self.connectionAttempt = nil
+            self.invitationID = nil
+            self.invitation = nil
+            self.peers = []
             self.match.disconnect()
             self.resetMotion()
             self.feedback.reset()

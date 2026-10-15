@@ -15,12 +15,31 @@ final class P0ngSmokeUITests: XCTestCase {
         XCTAssertTrue(play.waitForExistence(timeout: 15), "Game menu must launch")
 
         play.tap()
-        XCTAssertTrue(app.staticTexts["Solo · Left paddle"].waitForExistence(timeout: 8))
+        // The score and role are intentionally one accessible scoreboard element.
+        XCTAssertTrue(app.descendants(matching: .any)["pong.scoreboard"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["Exit"].exists)
 
         app.buttons["Exit"].tap()
         XCTAssertTrue(app.buttons["Host nearby match"].waitForExistence(timeout: 8),
                       "Returning to the menu must stop solo play")
+    }
+
+    @MainActor
+    func testSoloScoreboardAnnouncesBothScoringSides() {
+        let app = XCUIApplication()
+        app.launch()
+        let play = app.buttons["Play against computer"]
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        play.tap()
+
+        let scoreboard = app.descendants(matching: .any)["pong.scoreboard"]
+        XCTAssertTrue(scoreboard.waitForExistence(timeout: 8))
+        XCTAssertEqual(scoreboard.label, "Scoreboard")
+        let announced = scoreboard.value as? String ?? ""
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("left"))
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("right"))
+        XCTAssertTrue(announced.localizedCaseInsensitiveContains("solo"),
+                      "Combining score elements must not hide the current player role")
     }
 
     @MainActor

@@ -73,6 +73,10 @@ struct PongHomeView: View {
                         Text("\(model.state.rightScore)")
                     }
                     .font(.title.monospacedDigit().bold())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Scoreboard")
+                    .accessibilityValue("\(model.roleLabel). Left \(model.state.leftScore), right \(model.state.rightScore)")
+                    .accessibilityIdentifier("pong.scoreboard")
                     CourtView(snapshot: model.state, playingRight: model.isGuest) {
                         model.movePaddle(y: $0, finished: $1)
                     }

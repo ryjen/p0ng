@@ -1,4 +1,5 @@
 import XCTest
+import MultipeerConnectivity
 import PongCore
 @testable import p0ng
 
@@ -196,14 +197,50 @@ extension PongCoordinatorUnitTests {
         XCTAssertEqual(recorder.count, 1)
     }
 
+    // Legacy SDK objects are created before concurrent execution; the
+    // transport ingress lock performs all subsequent identity comparisons.
+    private struct TestNetworkReferences: @unchecked Sendable {
+        let session: MCSession
+        let peer: MCPeerID
+        let unexpected: MCPeerID
+    }
+
     func testDelegatePacketBudgetIsRaceFreeAndResetsPerSession() {
         let limiter = LockedPacketIngress()
         let accepted = CallbackRecorder()
-        DispatchQueue.concurrentPerform(iterations: 256) { _ in
-            if limiter.allow(at: 100) { accepted.record() }
+        let references = TestNetworkReferences(
+            session: MCSession(peer: MCPeerID(displayName: "local"),
+                               securityIdentity: nil, encryptionPreference: .required),
+            peer: MCPeerID(displayName: "authorized"),
+            unexpected: MCPeerID(displayName: "untrusted"))
+
+        XCTAssertFalse(limiter.allow(session: references.session,
+                                     from: references.peer, at: 100))
+        limiter.authorize(session: references.session, peer: references.peer)
+        DispatchQueue.concurrentPerform(iterations: 256) { index in
+            let sender = index.isMultiple(of: 2) ? references.peer : references.unexpected
+            if limiter.allow(session: references.session, from: sender, at: 100) {
+                accepted.record()
+            }
         }
         XCTAssertEqual(accepted.count, 120)
+        XCTAssertFalse(limiter.allow(session: references.session,
+                                     from: references.unexpected, at: 101))
         limiter.reset()
-        XCTAssertTrue(limiter.allow(at: 100))
+        XCTAssertFalse(limiter.allow(session: references.session,
+                                     from: references.peer, at: 102))
+        limiter.authorize(session: references.session, peer: references.unexpected)
+        XCTAssertFalse(limiter.allow(session: references.session,
+                                     from: references.peer, at: 103))
+        XCTAssertTrue(limiter.allow(session: references.session,
+                                    from: references.unexpected, at: 103))
+
+        // A newer match may reuse its own peer label; the actual session
+        // identity is part of admission, not just the display name.
+        let otherSession = MCSession(peer: MCPeerID(displayName: "other-local"),
+                                     securityIdentity: nil, encryptionPreference: .required)
+        XCTAssertFalse(limiter.allow(session: otherSession,
+                                     from: references.unexpected, at: 104))
+        limiter.reset()
     }
 }

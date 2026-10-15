@@ -22,6 +22,14 @@ public struct NearbyAdmissionGate: Sendable {
         return true
     }
 
+    /// An unanswered offer releases its slot but must never invalidate
+    /// an invitation that has already been explicitly accepted.
+    public mutating func expire() -> Bool {
+        guard state == .pending else { return false }
+        state = .available
+        return true
+    }
+
     public mutating func didConnect() -> Bool {
         guard state == .accepted || state == .connected else { return false }
         state = .connected

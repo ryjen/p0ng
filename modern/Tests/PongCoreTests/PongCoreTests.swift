@@ -544,3 +544,19 @@ extension PongCoreTests {
     }
 }
 
+extension PongCoreTests {
+    func testInvitationExpirationOnlyClearsUnansweredOffers() {
+        var gate = NearbyAdmissionGate()
+        XCTAssertFalse(gate.expire())
+        XCTAssertTrue(gate.offer())
+        XCTAssertTrue(gate.expire())
+        XCTAssertEqual(gate.state, .available)
+        XCTAssertFalse(gate.resolve(accept: true), "Expired consent is invalid")
+        XCTAssertTrue(gate.offer())
+        XCTAssertTrue(gate.resolve(accept: true))
+        XCTAssertFalse(gate.expire(), "Accepted consent cannot be revoked by a stale timer")
+        XCTAssertTrue(gate.didConnect())
+        XCTAssertFalse(gate.expire(), "Connected session cannot be invalidated by an offer timeout")
+    }
+}
+

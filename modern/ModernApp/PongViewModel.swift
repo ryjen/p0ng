@@ -90,6 +90,13 @@ final class PongViewModel: ObservableObject {
             guard let self, self.screen == .hosting, self.match.role == .host else { return }
             self.invitationID = UUID()
             self.invitation = name
+            self.message = nil // New approval supersedes any expired/error alert.
+        }
+        transport.onInvitationExpired = { [weak self] in
+            guard let self, self.screen == .hosting, self.invitationID != nil else { return }
+            self.invitationID = nil
+            self.invitation = nil
+            self.message = "Join request expired. A nearby player may try again."
         }
         transport.onError = { [weak self] problem in
             guard let self, self.screen != .menu else { return }

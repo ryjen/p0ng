@@ -30,6 +30,14 @@ public struct NearbyAdmissionGate: Sendable {
         return true
     }
 
+    /// Only an accepted invitation that never established a session may be
+    /// expired. A connected match must remain immune to old connect timers.
+    public mutating func expireUnconnectedAcceptance() -> Bool {
+        guard state == .accepted else { return false }
+        state = .available
+        return true
+    }
+
     public mutating func didConnect() -> Bool {
         guard state == .accepted || state == .connected else { return false }
         state = .connected

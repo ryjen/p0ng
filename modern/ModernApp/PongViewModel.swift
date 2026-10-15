@@ -284,6 +284,17 @@ final class PongViewModel: ObservableObject {
         }
     }
 
+    /// Rematch navigation follows the authoritative typed role, not display
+    /// copy. The view exposes this action after a completed match.
+    func playAgain() {
+        switch match.role {
+        case .solo: playSolo()
+        case .host: host()
+        case .guest: browse()
+        case .idle: break
+        }
+    }
+
     func playSolo() {
         retryMode = nil
         connectionAttempt = nil

@@ -5,6 +5,15 @@ import XCTest
 /// Deterministic transport simulation for two real MatchCoordinators.
 /// Packet delivery uses a logical clock; no sleeps or physical networking.
 private struct SimulatedLink {
+    /// Test-only deterministic failure and latency scheduling. No live traffic.
+    private enum SimulationPolicy {
+        static let realtimeDropInterval = 3
+        static let normalDeliveryFrames = 2
+        static let delayedSnapshotFrames = 9
+        static let initialHandshakeFrame = 1
+        static let handshakeRetryFrames = 60
+    }
+
     enum Peer { case host, guest }
     struct Transit {
         let destination: Peer
@@ -15,7 +24,7 @@ private struct SimulatedLink {
 
     var host = MatchCoordinator()
     var guest = MatchCoordinator()
-    var dropFirst: [String: Int]
+    var dropFirst: [MatchMessage.Kind: Int]
     var dropRealtimeThird: Bool
     private(set) var frame = 0
     private(set) var droppedCount = 0
@@ -24,7 +33,7 @@ private struct SimulatedLink {
     private var realtimeCount = 0
     private var pending: [Transit] = []
 
-    init(dropFirst: [String: Int] = [:], dropRealtimeThird: Bool = false) {
+    init(dropFirst: [MatchMessage.Kind: Int] = [:], dropRealtimeThird: Bool = false) {
         self.dropFirst = dropFirst
         self.dropRealtimeThird = dropRealtimeThird
         host.startHosting()
@@ -32,7 +41,7 @@ private struct SimulatedLink {
     }
 
     mutating func send(_ outgoing: OutgoingMessage, from peer: Peer) {
-        let kind = outgoing.packet.kind.rawValue
+        let kind = outgoing.packet.kind
         if let remaining = dropFirst[kind], remaining > 0 {
             dropFirst[kind] = remaining - 1
             droppedCount += 1
@@ -40,7 +49,7 @@ private struct SimulatedLink {
         }
         if outgoing.quality == .realtime {
             realtimeCount += 1
-            if dropRealtimeThird && realtimeCount % 3 == 0 {
+            if dropRealtimeThird && realtimeCount.isMultiple(of: SimulationPolicy.realtimeDropInterval) {
                 droppedCount += 1
                 return
             }
@@ -48,7 +57,8 @@ private struct SimulatedLink {
         // Jitter reorder: odd snapshots arrive after newer even snapshots.
         let delay = outgoing.packet.kind == .snapshot &&
                     outgoing.quality == .realtime &&
-                    !outgoing.packet.sequence.isMultiple(of: 2) ? 9 : 2
+                    !outgoing.packet.sequence.isMultiple(of: 2) ?
+                    SimulationPolicy.delayedSnapshotFrames : SimulationPolicy.normalDeliveryFrames
         serial += 1
         pending.append(Transit(destination: peer == .host ? .guest : .host,
                                packet: outgoing.packet, due: frame + delay,
@@ -77,7 +87,8 @@ private struct SimulatedLink {
     mutating func advance(_ count: Int, simulateHost: Bool = true) {
         for _ in 0..<count {
             frame += 1
-            if frame == 1 || frame % 60 == 0 {
+            if frame == SimulationPolicy.initialHandshakeFrame ||
+                frame.isMultiple(of: SimulationPolicy.handshakeRetryFrames) {
                 if let retry = guest.handshakeRetry() { send(retry, from: .guest) }
                 if let retry = host.handshakeRetry() { send(retry, from: .host) }
             }
@@ -103,9 +114,9 @@ private struct SimulatedLink {
 }
 
 final class SimulatedNetworkTests: XCTestCase {
-    func testFourLostHandshakeStagesRecoverWithoutEarlyHostTicks() {
+    func testFiveLostHandshakeStagesRecoverWithoutEarlyHostTicks() {
         var link = SimulatedLink(dropFirst: [
-            "welcome": 1, "ready": 1, "start": 1, "started": 1
+            .hello: 1, .welcome: 1, .ready: 1, .start: 1, .started: 1
         ])
         let initial = link.host.game.snapshot
         for _ in 0..<7 {
@@ -118,7 +129,7 @@ final class SimulatedNetworkTests: XCTestCase {
         XCTAssertTrue(link.host.ready)
         XCTAssertTrue(link.guest.ready)
         XCTAssertEqual(link.host.matchID, link.guest.matchID)
-        XCTAssertEqual(link.droppedCount, 4)
+        XCTAssertEqual(link.droppedCount, 5)
         link.advance(40)
         XCTAssertGreaterThan(link.acceptedSnapshots, 0)
         XCTAssertNotEqual(link.host.game.snapshot, initial)

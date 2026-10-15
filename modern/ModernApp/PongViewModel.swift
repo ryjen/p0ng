@@ -327,7 +327,7 @@ final class PongViewModel: ObservableObject {
         let attempt = UUID()
         connectionAttempt = attempt
         transport.join(peer)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 23) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.guestConnectionDeadlineSeconds) { [weak self] in
             guard let self, self.connectionAttempt == attempt,
                   self.screen == .connecting, !self.match.ready else { return }
             self.browse()

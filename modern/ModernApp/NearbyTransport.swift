@@ -141,7 +141,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
               let actualPeer = discovered.first(where: { peerTokens[$0] == peer.id }),
               let browser, let session else { return }
         selectedPeer = actualPeer
-        browser.invitePeer(actualPeer, to: session, withContext: nil, timeout: 20)
+        browser.invitePeer(actualPeer, to: session, withContext: nil, timeout: NearbySessionPolicy.invitationTimeoutSeconds)
     }
 
     func decideInvitation(accept: Bool) {
@@ -158,7 +158,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             acceptedAttemptID = attempt
             // An unanswered request expires at 18s. Once accepted, allow a
             // separate 25s connection window before rotating the old session.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.acceptedConnectionDeadlineSeconds) { [weak self] in
                 guard let self, self.acceptedAttemptID == attempt,
                       self.hosting, !self.connected,
                       self.admission.expireUnconnectedAcceptance() else { return }
@@ -273,7 +273,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             // The browsing peer's invitation expires after 20 seconds. Do
             // not keep this host's single admission slot occupied indefinitely
             // if nobody responds or the UI remains in the background.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 18) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.unansweredInvitationDeadlineSeconds) { [weak self] in
                 guard let self, let pending = self.pendingInvitation,
                       pending.id == id, self.hosting,
                       self.admission.expire() else { return }
@@ -385,7 +385,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     nonisolated func session(_ session: MCSession, didReceive data: Data,
                              fromPeer peerID: MCPeerID) {
         // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
-        guard data.count <= 4096, canDecodePacket(from: peerID, in: session),
+        guard data.count <= OutboundSendPolicy.maximumBytes, canDecodePacket(from: peerID, in: session),
               let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
         let sdk = SDKReference(value: session)
         let peer = PeerReference(value: peerID)

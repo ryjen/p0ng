@@ -10,7 +10,7 @@ public enum OutboundSendAction: Equatable {
 }
 
 public enum OutboundSendPolicy {
-    public static let maximumBytes = 4096
+    public static let maximumBytes = MatchWireFraming.maximumPayloadBytes
 
     public static func evaluate(connected: Bool, singleAuthorizedPeer: Bool,
                                 quality: SendQuality,

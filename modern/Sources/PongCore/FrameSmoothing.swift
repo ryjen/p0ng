@@ -244,3 +244,39 @@ public struct FrameTimingWindow {
     }
 }
 
+/// Bounded guest snapshot inter-arrival measurements. Captures timing only:
+/// this is *not* network RTT or touch-to-visible latency.
+public struct SnapshotArrivalWindow {
+    private var lastArrival: Double?
+    private var intervals: FrameTimingWindow
+
+    public init(capacity: Int = 360) {
+        intervals = FrameTimingWindow(capacity: capacity)
+    }
+
+    public mutating func observe(at time: Double) {
+        guard time.isFinite else { return }
+        if let previous = lastArrival {
+            if time < previous {
+                intervals.reset() // Monotonic clock reset/session discontinuity
+            } else if time > previous {
+                intervals.add(time - previous)
+            }
+        }
+        lastArrival = time
+    }
+
+    /// Preserve the last timestamp across periodic reports; next sample still
+    /// contributes its inter-arrival interval without retaining old samples.
+    public mutating func clearSamples() { intervals.reset() }
+
+    public mutating func reset() {
+        intervals.reset()
+        lastArrival = nil
+    }
+
+    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double)? {
+        intervals.summary()
+    }
+}
+

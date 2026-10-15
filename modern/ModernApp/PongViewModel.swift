@@ -62,6 +62,7 @@ final class PongViewModel: ObservableObject {
     private var debugSnapshotCount = 0
     private var debugLastReport: Double = 0
     private var debugFrameTimes = FrameTimingWindow()
+    private var debugSnapshotArrivals = SnapshotArrivalWindow()
     #endif
 
     var canRetryDiscovery: Bool { retryMode != nil }
@@ -161,8 +162,10 @@ final class PongViewModel: ObservableObject {
             guard self.match.receive(packet) else { return }
             if self.match.role == .guest {
                 self.feedback.observe(self.match.displayed)
-                self.interpolation.append(self.match.displayed, at: CACurrentMediaTime())
+                let arrival = CACurrentMediaTime()
+                self.interpolation.append(self.match.displayed, at: arrival)
                 #if DEBUG
+                self.debugSnapshotArrivals.observe(at: arrival)
                 self.debugSnapshotCount += 1
                 #endif
                 // Presentation of received state happens on the next display refresh.
@@ -215,6 +218,9 @@ final class PongViewModel: ObservableObject {
         interpolation.reset()
         pendingInput.reset()
         paddleReconciliation.reset()
+        #if DEBUG
+        debugSnapshotArrivals.reset()
+        #endif
     }
 
     /// Called directly on the main actor, once per native display refresh.
@@ -239,8 +245,10 @@ final class PongViewModel: ObservableObject {
         if now - debugLastReport >= 5 {
             // No identifiers or packet contents are logged.
             let timing = debugFrameTimes.summary()
-            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) frameP50ms=\(timing?.p50Milliseconds ?? 0) frameP95ms=\(timing?.p95Milliseconds ?? 0) discardedSimSeconds=\(frameStepper.discardedSeconds)")
+            let arrivals = debugSnapshotArrivals.summary()
+            print("p0ng perf frames=\(debugFrameCount) delayed=\(debugDelayedFrames) snapshots=\(debugSnapshotCount) frameP50ms=\(timing?.p50Milliseconds ?? 0) frameP95ms=\(timing?.p95Milliseconds ?? 0) snapshotGapP50ms=\(arrivals?.p50Milliseconds ?? 0) snapshotGapP95ms=\(arrivals?.p95Milliseconds ?? 0) discardedSimSeconds=\(frameStepper.discardedSeconds)")
             debugFrameTimes.reset()
+            debugSnapshotArrivals.clearSamples()
             debugFrameCount = 0
             debugDelayedFrames = 0
             debugSnapshotCount = 0

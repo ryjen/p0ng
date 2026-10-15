@@ -38,9 +38,9 @@ final class PongCoordinatorUnitTests: XCTestCase {
         network.onInvitationExpired?()
         XCTAssertNil(model.invitation)
         XCTAssertNotNil(model.message)
-        model.message = nil
         network.onInvitation?("visitor-2")
         XCTAssertEqual(model.invitation, "visitor-2")
+        XCTAssertNil(model.message, "New invitation must clear stale expiry alert")
         model.respondToInvitation(true)
         XCTAssertNil(model.invitation)
         XCTAssertEqual(network.decisions, [true])

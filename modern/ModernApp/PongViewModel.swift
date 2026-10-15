@@ -331,10 +331,12 @@ final class PongViewModel: ObservableObject {
             // A discovered peer may disappear before the user selects it.
             // Do not start a connection timeout for an invitation never sent.
             connectionAttempt = nil
+            peers.removeAll { $0.id == peer.id }
             screen = .browsing
             message = "Host no longer available. Select another nearby host."
             return
         }
+        message = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.guestConnectionDeadlineSeconds) { [weak self] in
             guard let self, self.connectionAttempt == attempt,
                   self.screen == .connecting, !self.match.ready else { return }

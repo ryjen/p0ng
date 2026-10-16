@@ -138,7 +138,11 @@ public struct MatchCoordinator {
         case .guest:
             switch m.kind {
             case .welcome:
-                guard !ready, let state = m.state, Self.valid(state) else {
+                // A host cannot advance its game until the start barrier
+                // completes. Resume-from-checkpoint would need a distinct
+                // protocol contract; reject forged or stale advanced welcomes.
+                guard !ready, let state = m.state, Self.valid(state),
+                      state == PongGame().snapshot else {
                     return (false, nil)
                 }
                 if matchID == nil {

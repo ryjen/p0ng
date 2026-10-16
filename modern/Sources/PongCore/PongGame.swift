@@ -19,7 +19,7 @@ public struct PongSnapshot: Codable, Equatable, Sendable {
     public var leftScore: Int = 0
     public var rightScore: Int = 0
     public var phase: RoundPhase = .serving
-    public var serveRemaining: Double = 1.0
+    public var serveRemaining: Double = PongGame.serveDurationSeconds
 
     public init() {}
 }
@@ -30,6 +30,7 @@ public struct PongGame {
     public static let paddleInset = 0.055
     public static let ballRadius = 0.012
     public static let winningScore = 7
+    public static let serveDurationSeconds = 1.0
 
     public private(set) var snapshot = PongSnapshot()
     private var serveDirection = 1.0
@@ -117,6 +118,6 @@ public struct PongGame {
         snapshot.ballVX = 0.62 * serveDirection
         snapshot.ballVY = 0.24 * (side == .left ? 1 : -1)
         snapshot.phase = .serving
-        snapshot.serveRemaining = 1
+        snapshot.serveRemaining = Self.serveDurationSeconds
     }
 }

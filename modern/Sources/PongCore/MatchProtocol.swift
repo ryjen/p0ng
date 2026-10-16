@@ -229,7 +229,9 @@ public struct MatchCoordinator {
         let leadingScore = max(s.leftScore, s.rightScore)
         switch s.phase {
         case .finished:
-            guard leadingScore == PongGame.winningScore else { return false }
+            // A single side must win; the host cannot produce a tied terminal score.
+            guard leadingScore == PongGame.winningScore,
+                  min(s.leftScore, s.rightScore) < PongGame.winningScore else { return false }
         case .serving, .playing:
             guard leadingScore < PongGame.winningScore else { return false }
         }

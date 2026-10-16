@@ -535,6 +535,40 @@ extension PongCoreTests {
         window.reset()
         XCTAssertTrue(window.admit(at: 2.1))
     }
+
+    func testIngressRejectsBoundaryBurstsWithinRollingSecond() {
+        // Two fixed-window bursts must not both fit in the same elapsed second.
+        let capacity = 3
+        let start = 10.0
+        let quarterSecond = 0.25
+        let eighthSecond = 0.125
+        let oneSecond = 1.0
+        var window = PacketIngressWindow(maxPerSecond: capacity)
+        for time in [start, start + quarterSecond, start + 2 * quarterSecond] {
+            XCTAssertTrue(window.admit(at: time))
+        }
+        XCTAssertFalse(window.admit(at: start + 3 * quarterSecond))
+        // Only the oldest event has aged out; allowing a full new burst here
+        // would consume up to twice the stated rolling packet budget.
+        XCTAssertTrue(window.admit(at: start + oneSecond))
+        XCTAssertFalse(window.admit(at: start + oneSecond + eighthSecond))
+        XCTAssertTrue(window.admit(at: start + oneSecond + quarterSecond))
+        XCTAssertFalse(window.admit(at: start + oneSecond + quarterSecond + eighthSecond))
+        XCTAssertTrue(window.admit(at: start + oneSecond + 2 * quarterSecond))
+        XCTAssertFalse(window.admit(at: .nan), "Invalid time must never admit work")
+    }
+
+    func testIngressClockDiscontinuityResetsRollingWindow() {
+        let priorTime = 10.0
+        let earlierTime = 0.0
+        var window = PacketIngressWindow(maxPerSecond: 1)
+        XCTAssertTrue(window.admit(at: priorTime))
+        XCTAssertFalse(window.admit(at: priorTime))
+        XCTAssertTrue(window.admit(at: earlierTime), "A clock rewind starts a new window")
+        XCTAssertFalse(window.admit(at: earlierTime))
+        window.reset()
+        XCTAssertTrue(window.admit(at: earlierTime))
+    }
 }
 
 extension PongCoreTests {

@@ -306,6 +306,62 @@ final class PongCoreTests: XCTestCase {
             "Rejected packets must not consume sequence numbers")
     }
 
+    func testGuestRejectsScoreRegressionWithoutConsumingSequence() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        var initial = PongSnapshot()
+        initial.leftScore = 2
+        initial.rightScore = 1
+        initial.phase = .playing
+        initial.serveRemaining = 0
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: initial)))
+
+        var regressed = initial
+        regressed.leftScore = 1
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: regressed)))
+        XCTAssertEqual(guest.displayed, initial)
+
+        regressed = initial
+        regressed.rightScore = 0
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: regressed)))
+        XCTAssertEqual(guest.displayed, initial)
+
+        var next = initial
+        next.rightScore = 2
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: next)),
+            "Rejected rollback must not consume the next valid sequence")
+        XCTAssertEqual(guest.displayed, next)
+    }
+
+    func testGuestCannotReopenOrUpdateFinishedMatch() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        var winner = PongSnapshot()
+        winner.leftScore = PongGame.winningScore
+        winner.phase = .finished
+        winner.serveRemaining = 0
+        winner.ballVX = 0
+        winner.ballVY = 0
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: winner)))
+
+        var reopening = PongSnapshot()
+        reopening.leftScore = PongGame.winningScore - 1
+        reopening.phase = .playing
+        reopening.serveRemaining = 0
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: reopening)))
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 3, state: winner)),
+            "Even a later terminal snapshot cannot mutate a completed match")
+        XCTAssertEqual(guest.displayed, winner)
+        XCTAssertTrue(guest.ready, "Completed match remains ready until reset or disconnect")
+    }
+
     func testGuestRejectsImpossibleScoreAndPhaseWithoutAdvancingSequence() {
         var host = MatchCoordinator(), guest = MatchCoordinator()
         let id = connect(&host, &guest)

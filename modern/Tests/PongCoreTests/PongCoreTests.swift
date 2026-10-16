@@ -323,8 +323,12 @@ final class PongCoreTests: XCTestCase {
         scorelessFinish.phase = .finished
         scorelessFinish.serveRemaining = 0
 
+        var doubleWinner = scorelessFinish
+        doubleWinner.leftScore = PongGame.winningScore
+        doubleWinner.rightScore = PongGame.winningScore
+
         // Invalid packets must not consume the authoritative sequence slot.
-        for impossible in [unfinishedWinner, servingWinner, scorelessFinish] {
+        for impossible in [unfinishedWinner, servingWinner, scorelessFinish, doubleWinner] {
             XCTAssertFalse(guest.receive(MatchMessage(
                 kind: .snapshot, matchID: id, sequence: 1, state: impossible)))
             XCTAssertEqual(guest.displayed, previous)

@@ -306,6 +306,56 @@ final class PongCoreTests: XCTestCase {
             "Rejected packets must not consume sequence numbers")
     }
 
+    func testGuestRejectsImpossibleScoreAndPhaseWithoutAdvancingSequence() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        let previous = guest.displayed
+
+        var unfinishedWinner = PongSnapshot()
+        unfinishedWinner.leftScore = PongGame.winningScore
+        unfinishedWinner.phase = .playing
+
+        var servingWinner = PongSnapshot()
+        servingWinner.rightScore = PongGame.winningScore
+        servingWinner.phase = .serving
+
+        var scorelessFinish = PongSnapshot()
+        scorelessFinish.phase = .finished
+        scorelessFinish.serveRemaining = 0
+
+        // Invalid packets must not consume the authoritative sequence slot.
+        for impossible in [unfinishedWinner, servingWinner, scorelessFinish] {
+            XCTAssertFalse(guest.receive(MatchMessage(
+                kind: .snapshot, matchID: id, sequence: 1, state: impossible)))
+            XCTAssertEqual(guest.displayed, previous)
+        }
+
+        var validFinish = scorelessFinish
+        validFinish.leftScore = PongGame.winningScore
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: validFinish)))
+        XCTAssertEqual(guest.displayed.phase, .finished)
+        XCTAssertEqual(guest.displayed.leftScore, PongGame.winningScore)
+    }
+
+    func testInvalidFinishedWelcomeCannotBindGuestMatch() {
+        let id = UUID()
+        var guest = MatchCoordinator()
+        guest.startJoining()
+        var invalid = PongSnapshot()
+        invalid.phase = .finished
+        invalid.serveRemaining = 0
+
+        XCTAssertFalse(guest.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: id, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(guest.matchID)
+        XCTAssertFalse(guest.ready)
+
+        XCTAssertTrue(guest.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: id, sequence: 0, state: PongSnapshot())).accepted)
+        XCTAssertEqual(guest.matchID, id)
+    }
+
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()

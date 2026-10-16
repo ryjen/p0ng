@@ -168,6 +168,41 @@ final class SimulatedNetworkTests: XCTestCase {
         XCTAssertNotEqual(link.host.game.snapshot.leftScore, PongGame.winningScore)
     }
 
+    func testLateQueuedTrafficFromPreviousMatchCannotMutateRestartedSession() {
+        var link = SimulatedLink()
+        link.advance(15)
+        XCTAssertTrue(link.host.ready)
+        XCTAssertTrue(link.guest.ready)
+
+        let oldID = link.host.matchID!
+        let oldInput = link.guest.setPaddle(0.86, finished: true)!
+        let oldSnapshot = link.host.tick() ?? link.host.tick()!
+        XCTAssertEqual(oldInput.packet.matchID, oldID)
+        XCTAssertEqual(oldSnapshot.packet.matchID, oldID)
+
+        link.restart()
+        link.advance(15, simulateHost: false)
+        XCTAssertTrue(link.host.ready)
+        XCTAssertTrue(link.guest.ready)
+        XCTAssertNotEqual(link.host.matchID, oldID)
+
+        let hostBefore = link.host.displayed
+        let guestBefore = link.guest.displayed
+        // Route old traffic through the same logical-clock queue used for
+        // reliable inputs and reordered realtime snapshots. This exercises
+        // actual delivery after the new handshake rather than direct receive.
+        link.send(oldInput, from: .guest)
+        link.send(oldSnapshot, from: .host)
+        link.advance(20, simulateHost: false)
+
+        XCTAssertEqual(link.host.displayed, hostBefore,
+                       "Queued old guest input must not move the new host paddle")
+        XCTAssertEqual(link.guest.displayed, guestBefore,
+                       "Queued old host snapshot must not overwrite the new match")
+        XCTAssertTrue(link.host.ready)
+        XCTAssertTrue(link.guest.ready)
+    }
+
     func testPacketsFromPreviousSessionCannotMutateNewMatch() {
         var link = SimulatedLink()
         link.advance(15)

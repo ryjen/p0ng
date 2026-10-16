@@ -224,6 +224,17 @@ public struct MatchCoordinator {
     }
 
     private static func valid(_ s: PongSnapshot) -> Bool {
+        // A valid host never enters the terminal phase before a winning score,
+        // nor emits a playable state once either side has won.
+        let leadingScore = max(s.leftScore, s.rightScore)
+        switch s.phase {
+        case .finished:
+            // A single side must win; the host cannot produce a tied terminal score.
+            guard leadingScore == PongGame.winningScore,
+                  min(s.leftScore, s.rightScore) < PongGame.winningScore else { return false }
+        case .serving, .playing:
+            guard leadingScore < PongGame.winningScore else { return false }
+        }
         let values = [s.ballX, s.ballY, s.ballVX, s.ballVY,
                       s.leftPaddleY, s.rightPaddleY]
         return values.allSatisfy { $0.isFinite && abs($0) <= 4 } &&

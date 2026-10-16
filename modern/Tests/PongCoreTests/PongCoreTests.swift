@@ -269,6 +269,43 @@ final class PongCoreTests: XCTestCase {
                                                  sequence: 1, state: PongSnapshot())))
     }
 
+    func testGuestRejectsInvalidServeCountdownDuringHandshakeAndPlay() {
+        let matchID = UUID()
+        var joining = MatchCoordinator()
+        joining.startJoining()
+
+        var invalid = PongSnapshot()
+        invalid.serveRemaining = -PongGame.serveDurationSeconds
+        XCTAssertFalse(joining.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(joining.matchID, "Invalid welcome cannot bind a match")
+
+        invalid.serveRemaining = PongGame.serveDurationSeconds.nextUp
+        XCTAssertFalse(joining.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(joining.matchID)
+
+        let validWelcome = MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: PongSnapshot())
+        XCTAssertTrue(joining.acceptHandshake(validWelcome).accepted)
+
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        let previous = guest.displayed
+        for countdown in [-PongGame.serveDurationSeconds,
+                          PongGame.serveDurationSeconds.nextUp] {
+            var snapshot = PongSnapshot()
+            snapshot.serveRemaining = countdown
+            XCTAssertFalse(guest.receive(MatchMessage(
+                kind: .snapshot, matchID: id, sequence: 1, state: snapshot)))
+            XCTAssertEqual(guest.displayed, previous,
+                           "Invalid snapshot must not change render state")
+        }
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: PongSnapshot())),
+            "Rejected packets must not consume sequence numbers")
+    }
+
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()

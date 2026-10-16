@@ -360,6 +360,41 @@ final class PongCoreTests: XCTestCase {
         XCTAssertEqual(guest.matchID, id)
     }
 
+    func testGuestWelcomeRequiresInitialHostState() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let id = host.matchID!
+
+        var completed = PongSnapshot()
+        completed.leftScore = PongGame.winningScore
+        completed.phase = .finished
+        completed.serveRemaining = 0
+        completed.ballVX = 0
+        completed.ballVY = 0
+
+        var running = PongSnapshot()
+        running.phase = .playing
+        running.serveRemaining = 0
+
+        var scored = PongSnapshot()
+        scored.rightScore = 1
+
+        for state in [completed, running, scored] {
+            XCTAssertFalse(guest.acceptHandshake(MatchMessage(
+                kind: .welcome, matchID: id, sequence: 0, state: state)).accepted,
+                "A fresh match cannot begin from a progressed game snapshot")
+            XCTAssertNil(guest.matchID, "Rejected welcome must not bind an identity")
+            XCTAssertFalse(guest.ready)
+        }
+
+        let hello = guest.handshakeRetry()!.packet
+        let welcome = host.acceptHandshake(hello)
+        XCTAssertTrue(welcome.accepted)
+        XCTAssertTrue(guest.acceptHandshake(welcome.response!.packet).accepted)
+        XCTAssertEqual(guest.matchID, id)
+    }
+
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()

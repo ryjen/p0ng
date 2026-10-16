@@ -213,9 +213,14 @@ public struct MatchCoordinator {
             displayed = game.snapshot
             return true
         case .guest:
-            guard ready, message.kind == .snapshot, message.matchID == matchID,
+            // Terminal state and scores are monotonic within a match ID.
+            // A late packet must not reopen a completed match.
+            guard ready, displayed.phase != .finished,
+                  message.kind == .snapshot, message.matchID == matchID,
                   message.sequence > lastSnapshot, message.paddleY == nil,
-                  let state = message.state, Self.valid(state) else { return false }
+                  let state = message.state, Self.valid(state),
+                  state.leftScore >= displayed.leftScore,
+                  state.rightScore >= displayed.rightScore else { return false }
             lastSnapshot = message.sequence
             displayed = state
             return true

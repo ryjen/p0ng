@@ -171,6 +171,12 @@ final class PongViewModel: ObservableObject {
             }
             guard self.match.receive(packet) else { return }
             if self.match.role == .guest {
+                // An authoritative win ends local input prediction immediately.
+                // No queued movement may leak into a completed match.
+                if self.match.displayed.phase == .finished {
+                    self.pendingInput.reset()
+                    self.paddleReconciliation.reset()
+                }
                 self.feedback.observe(self.match.displayed)
                 let arrival = CACurrentMediaTime()
                 self.interpolation.append(self.match.displayed, at: arrival)
@@ -379,7 +385,8 @@ final class PongViewModel: ObservableObject {
     }
 
     func movePaddle(y: Double, finished: Bool = false) {
-        guard screen == .playing else { return }
+        guard screen == .playing, match.ready,
+              match.displayed.phase != .finished, y.isFinite else { return }
         let position = min(1 - PongGame.paddleHeight / 2,
                            max(PongGame.paddleHeight / 2, y))
         if match.role == .guest {

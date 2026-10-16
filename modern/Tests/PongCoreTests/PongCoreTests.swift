@@ -269,6 +269,97 @@ final class PongCoreTests: XCTestCase {
                                                  sequence: 1, state: PongSnapshot())))
     }
 
+    func testGuestRejectsInvalidServeCountdownDuringHandshakeAndPlay() {
+        let matchID = UUID()
+        var joining = MatchCoordinator()
+        joining.startJoining()
+
+        var invalid = PongSnapshot()
+        invalid.serveRemaining = -PongGame.serveDurationSeconds
+        XCTAssertFalse(joining.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(joining.matchID, "Invalid welcome cannot bind a match")
+
+        invalid.serveRemaining = PongGame.serveDurationSeconds.nextUp
+        XCTAssertFalse(joining.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(joining.matchID)
+
+        let validWelcome = MatchMessage(
+            kind: .welcome, matchID: matchID, sequence: 0, state: PongSnapshot())
+        XCTAssertTrue(joining.acceptHandshake(validWelcome).accepted)
+
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        let previous = guest.displayed
+        for countdown in [-PongGame.serveDurationSeconds,
+                          PongGame.serveDurationSeconds.nextUp] {
+            var snapshot = PongSnapshot()
+            snapshot.serveRemaining = countdown
+            XCTAssertFalse(guest.receive(MatchMessage(
+                kind: .snapshot, matchID: id, sequence: 1, state: snapshot)))
+            XCTAssertEqual(guest.displayed, previous,
+                           "Invalid snapshot must not change render state")
+        }
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: PongSnapshot())),
+            "Rejected packets must not consume sequence numbers")
+    }
+
+    func testGuestRejectsImpossibleScoreAndPhaseWithoutAdvancingSequence() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        let previous = guest.displayed
+
+        var unfinishedWinner = PongSnapshot()
+        unfinishedWinner.leftScore = PongGame.winningScore
+        unfinishedWinner.phase = .playing
+
+        var servingWinner = PongSnapshot()
+        servingWinner.rightScore = PongGame.winningScore
+        servingWinner.phase = .serving
+
+        var scorelessFinish = PongSnapshot()
+        scorelessFinish.phase = .finished
+        scorelessFinish.serveRemaining = 0
+
+        var doubleWinner = scorelessFinish
+        doubleWinner.leftScore = PongGame.winningScore
+        doubleWinner.rightScore = PongGame.winningScore
+
+        // Invalid packets must not consume the authoritative sequence slot.
+        for impossible in [unfinishedWinner, servingWinner, scorelessFinish, doubleWinner] {
+            XCTAssertFalse(guest.receive(MatchMessage(
+                kind: .snapshot, matchID: id, sequence: 1, state: impossible)))
+            XCTAssertEqual(guest.displayed, previous)
+        }
+
+        var validFinish = scorelessFinish
+        validFinish.leftScore = PongGame.winningScore
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: validFinish)))
+        XCTAssertEqual(guest.displayed.phase, .finished)
+        XCTAssertEqual(guest.displayed.leftScore, PongGame.winningScore)
+    }
+
+    func testInvalidFinishedWelcomeCannotBindGuestMatch() {
+        let id = UUID()
+        var guest = MatchCoordinator()
+        guest.startJoining()
+        var invalid = PongSnapshot()
+        invalid.phase = .finished
+        invalid.serveRemaining = 0
+
+        XCTAssertFalse(guest.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: id, sequence: 0, state: invalid)).accepted)
+        XCTAssertNil(guest.matchID)
+        XCTAssertFalse(guest.ready)
+
+        XCTAssertTrue(guest.acceptHandshake(MatchMessage(
+            kind: .welcome, matchID: id, sequence: 0, state: PongSnapshot())).accepted)
+        XCTAssertEqual(guest.matchID, id)
+    }
+
     func testSoloAndHostDoNotApplyGuestPhysics() {
         var solo = MatchCoordinator()
         solo.startSolo()
@@ -497,6 +588,40 @@ extension PongCoreTests {
         XCTAssertTrue(window.admit(at: 2.1))
         window.reset()
         XCTAssertTrue(window.admit(at: 2.1))
+    }
+
+    func testIngressRejectsBoundaryBurstsWithinRollingSecond() {
+        // Two fixed-window bursts must not both fit in the same elapsed second.
+        let capacity = 3
+        let start = 10.0
+        let quarterSecond = 0.25
+        let eighthSecond = 0.125
+        let oneSecond = 1.0
+        var window = PacketIngressWindow(maxPerSecond: capacity)
+        for time in [start, start + quarterSecond, start + 2 * quarterSecond] {
+            XCTAssertTrue(window.admit(at: time))
+        }
+        XCTAssertFalse(window.admit(at: start + 3 * quarterSecond))
+        // Only the oldest event has aged out; allowing a full new burst here
+        // would consume up to twice the stated rolling packet budget.
+        XCTAssertTrue(window.admit(at: start + oneSecond))
+        XCTAssertFalse(window.admit(at: start + oneSecond + eighthSecond))
+        XCTAssertTrue(window.admit(at: start + oneSecond + quarterSecond))
+        XCTAssertFalse(window.admit(at: start + oneSecond + quarterSecond + eighthSecond))
+        XCTAssertTrue(window.admit(at: start + oneSecond + 2 * quarterSecond))
+        XCTAssertFalse(window.admit(at: .nan), "Invalid time must never admit work")
+    }
+
+    func testIngressClockDiscontinuityResetsRollingWindow() {
+        let priorTime = 10.0
+        let earlierTime = 0.0
+        var window = PacketIngressWindow(maxPerSecond: 1)
+        XCTAssertTrue(window.admit(at: priorTime))
+        XCTAssertFalse(window.admit(at: priorTime))
+        XCTAssertTrue(window.admit(at: earlierTime), "A clock rewind starts a new window")
+        XCTAssertFalse(window.admit(at: earlierTime))
+        window.reset()
+        XCTAssertTrue(window.admit(at: earlierTime))
     }
 }
 

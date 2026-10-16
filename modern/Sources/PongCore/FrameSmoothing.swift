@@ -195,30 +195,40 @@ public struct SnapshotPacketBatch {
     }
 }
 
-/// Bounds packet decoding work on the delegate queue. The window applies to
-/// received packets, regardless of their validity, and is reset per session.
+/// Bounds packet decoding work over every rolling second, including bursts
+/// across a second boundary. The caller serializes delegate-thread access.
+/// Timestamps are retained only for admitted packets, capped at maxPerSecond.
+/// Rejected and malformed packets cannot extend the window or grow memory.
 public struct PacketIngressWindow {
-    public let maxPerSecond: Int
-    private var startTime: Double?
-    private var accepted = 0
+    public static let defaultMaximumPacketsPerSecond = 120
+    private static let windowSeconds = 1.0
 
-    public init(maxPerSecond: Int = 120) {
+    public let maxPerSecond: Int
+    // At most maxPerSecond timestamps; the caller synchronizes access.
+    private var acceptedAt: [Double] = []
+    private var lastObservedTime: Double?
+
+    public init(maxPerSecond: Int = PacketIngressWindow.defaultMaximumPacketsPerSecond) {
         self.maxPerSecond = max(1, maxPerSecond)
     }
 
     public mutating func reset() {
-        startTime = nil
-        accepted = 0
+        acceptedAt.removeAll(keepingCapacity: true)
+        lastObservedTime = nil
     }
 
     public mutating func admit(at now: Double) -> Bool {
         guard now.isFinite else { return false }
-        if let startTime {
-            if now < startTime || now - startTime >= 1.0 { reset() }
+        if let lastObservedTime, now < lastObservedTime {
+            reset() // Monotonic-clock discontinuity invalidates old observations.
         }
-        if startTime == nil { startTime = now }
-        guard accepted < maxPerSecond else { return false }
-        accepted += 1
+        lastObservedTime = now
+        while let oldest = acceptedAt.first,
+              now - oldest >= Self.windowSeconds {
+            acceptedAt.removeFirst()
+        }
+        guard acceptedAt.count < maxPerSecond else { return false }
+        acceptedAt.append(now)
         return true
     }
 }

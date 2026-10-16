@@ -555,6 +555,47 @@ extension PongCoreTests {
         XCTAssertTrue(batch.drain().isEmpty)
     }
 
+    func testSnapshotBatchDropsRealtimeOlderThanReliableTransition() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .realtime))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 11, state: PongSnapshot()),
+            quality: .reliable))
+        XCTAssertEqual(batch.drain().map { $0.packet.sequence }, [11],
+                       "A newer reliable transition supersedes old realtime state")
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testSnapshotBatchKeepsRealtimeAfterLastReliableTransition() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .reliable))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 11, state: PongSnapshot()),
+            quality: .realtime))
+        XCTAssertEqual(batch.drain().map { $0.packet.sequence }, [10, 11],
+                       "Newer realtime state remains valid after a reliable phase change")
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testSnapshotBatchNeverMixesRealtimeFromDifferentMatches() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .reliable))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: UUID(), sequence: 11, state: PongSnapshot()),
+            quality: .realtime))
+        XCTAssertEqual(batch.drain().map { $0.packet.matchID }, [id],
+                       "A catch-up batch cannot append stale state from another match")
+    }
+
     func testCatchupSnapshotBatchPreservesCriticalScoreAndPhase() {
         let id = UUID()
         var batch = SnapshotPacketBatch()

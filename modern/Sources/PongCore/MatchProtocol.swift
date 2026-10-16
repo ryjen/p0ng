@@ -225,8 +225,10 @@ public struct MatchCoordinator {
 
     private static func valid(_ s: PongSnapshot) -> Bool {
         let values = [s.ballX, s.ballY, s.ballVX, s.ballVY,
-                      s.leftPaddleY, s.rightPaddleY, s.serveRemaining]
+                      s.leftPaddleY, s.rightPaddleY]
         return values.allSatisfy { $0.isFinite && abs($0) <= 4 } &&
+            s.serveRemaining.isFinite &&
+            (0...PongGame.serveDurationSeconds).contains(s.serveRemaining) &&
             (0...PongGame.winningScore).contains(s.leftScore) &&
             (0...PongGame.winningScore).contains(s.rightScore) &&
             (0...1).contains(s.leftPaddleY) &&

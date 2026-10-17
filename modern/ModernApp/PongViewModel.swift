@@ -173,14 +173,18 @@ final class PongViewModel: ObservableObject {
             if self.match.role == .guest {
                 // An authoritative win ends local input prediction immediately.
                 // No queued movement may leak into a completed match.
-                if self.match.displayed.phase == .finished {
+                let terminal = self.match.displayed.phase == .finished
+                if terminal {
                     self.pendingInput.reset()
                     self.paddleReconciliation.reset()
+                    // Drop pre-win interpolation samples so the next display
+                    // refresh cannot replay an obsolete running-game frame.
+                    self.interpolation.reset()
                 }
                 self.feedback.observe(self.match.displayed)
                 let arrival = CACurrentMediaTime()
                 self.interpolation.append(self.match.displayed, at: arrival)
-                if self.match.displayed.phase == .finished {
+                if terminal {
                     // Do not leave a locally predicted paddle or prior score
                     // visible until the next display callback after game-over.
                     self.publish(self.match.displayed)

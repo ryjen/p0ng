@@ -266,7 +266,6 @@ final class PongCoordinatorUnitTests: XCTestCase {
         // A local touch is rendered immediately while host gameplay is active.
         model.movePaddle(y: 0.8)
         XCTAssertEqual(model.state.rightPaddleY, 0.8, accuracy: 0.001)
-        let displayedBeforeWin = model.state
         let sendsBeforeWin = network.messages.count
 
         var winner = PongSnapshot()
@@ -279,11 +278,13 @@ final class PongCoordinatorUnitTests: XCTestCase {
             kind: .snapshot, matchID: host.matchID!,
             sequence: 1, state: winner))
 
-        // The final state is authoritative even if a stale touch callback
-        // arrives before the next display-link presentation refresh.
+        // Completion must be published immediately, not delayed until
+        // another display refresh with an obsolete predicted paddle.
+        XCTAssertEqual(model.state, winner,
+                       "The terminal host state replaces local prediction immediately")
         model.movePaddle(y: 0.1, finished: true)
-        XCTAssertEqual(model.state, displayedBeforeWin,
-                       "A finished match cannot receive new guest-side prediction")
+        XCTAssertEqual(model.state, winner,
+                       "A late touch must not overwrite the displayed winning state")
         XCTAssertEqual(network.messages.count, sendsBeforeWin,
                        "Completed games must not enqueue a reliable finger release")
         XCTAssertTrue(model.isReady)

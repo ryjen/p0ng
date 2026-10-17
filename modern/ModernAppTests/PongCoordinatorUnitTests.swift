@@ -240,6 +240,21 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertGreaterThan(network.stops, 0)
     }
 
+    func testNonfiniteTouchInputLeavesLocalSimulationUnchanged() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.playSolo()
+        let before = model.state
+
+        model.movePaddle(y: .nan)
+        model.movePaddle(y: .infinity)
+        model.movePaddle(y: -.infinity, finished: true)
+
+        XCTAssertEqual(model.state, before)
+        XCTAssertTrue(network.messages.isEmpty,
+                      "Invalid touch coordinates must not produce network input")
+    }
+
     func testFinishedGuestMatchRejectsTouchPredictionAndLateRelease() {
         let network = FakeTransport()
         let model = PongViewModel(transport: network)

@@ -171,9 +171,24 @@ final class PongViewModel: ObservableObject {
             }
             guard self.match.receive(packet) else { return }
             if self.match.role == .guest {
+                // An authoritative win ends local input prediction immediately.
+                // No queued movement may leak into a completed match.
+                let terminal = self.match.displayed.phase == .finished
+                if terminal {
+                    self.pendingInput.reset()
+                    self.paddleReconciliation.reset()
+                    // Drop pre-win interpolation samples so the next display
+                    // refresh cannot replay an obsolete running-game frame.
+                    self.interpolation.reset()
+                }
                 self.feedback.observe(self.match.displayed)
                 let arrival = CACurrentMediaTime()
                 self.interpolation.append(self.match.displayed, at: arrival)
+                if terminal {
+                    // Do not leave a locally predicted paddle or prior score
+                    // visible until the next display callback after game-over.
+                    self.publish(self.match.displayed)
+                }
                 #if DEBUG
                 self.debugSnapshotArrivals.observe(at: arrival, sequence: packet.sequence)
                 self.debugSnapshotCount += 1
@@ -379,7 +394,8 @@ final class PongViewModel: ObservableObject {
     }
 
     func movePaddle(y: Double, finished: Bool = false) {
-        guard screen == .playing else { return }
+        guard screen == .playing, match.ready,
+              match.displayed.phase != .finished, y.isFinite else { return }
         let position = min(1 - PongGame.paddleHeight / 2,
                            max(PongGame.paddleHeight / 2, y))
         if match.role == .guest {

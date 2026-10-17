@@ -180,6 +180,11 @@ final class PongViewModel: ObservableObject {
                 self.feedback.observe(self.match.displayed)
                 let arrival = CACurrentMediaTime()
                 self.interpolation.append(self.match.displayed, at: arrival)
+                if self.match.displayed.phase == .finished {
+                    // Do not leave a locally predicted paddle or prior score
+                    // visible until the next display callback after game-over.
+                    self.publish(self.match.displayed)
+                }
                 #if DEBUG
                 self.debugSnapshotArrivals.observe(at: arrival, sequence: packet.sequence)
                 self.debugSnapshotCount += 1

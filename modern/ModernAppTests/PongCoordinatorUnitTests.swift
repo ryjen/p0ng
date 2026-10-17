@@ -302,6 +302,11 @@ final class PongCoordinatorUnitTests: XCTestCase {
                        "A late touch must not overwrite the displayed winning state")
         XCTAssertEqual(network.messages.count, sendsBeforeWin,
                        "Completed games must not enqueue a reliable finger release")
+        // The next display refresh must not replay an old interpolated
+        // playing frame after the immediate terminal publication.
+        // The display-link callback itself is exercised in native tests.
+        XCTAssertEqual(model.state.phase, .finished)
+
         XCTAssertTrue(model.isReady)
     }
 

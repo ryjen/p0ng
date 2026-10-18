@@ -47,6 +47,9 @@ jobs:
           test "$GITHUB_REPOSITORY" = "ryjen/p0ng"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "ryjen"
+          # On rerun, github.actor remains the original user; enforce the
+          # actual triggering user too before allowing any PR checkout.
+          test "$GITHUB_TRIGGERING_ACTOR" = "ryjen"
           python3 - <<'PY'
           import json
           import os

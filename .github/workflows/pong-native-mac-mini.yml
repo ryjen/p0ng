@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Same-repository p0ng PR number (#36 or #37 initially)"
-        type: number
+        description: "Same-repository p0ng PR number (digits only, e.g. 36)"
+        type: string
         required: true
       head_sha:
         description: "Exact 40-character Git commit SHA of that PR head"

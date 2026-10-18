@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: p0ng-manual-mac-mini
@@ -152,7 +153,9 @@ jobs:
               if not runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-"):
                   continue
               for entry in entries:
-                  if (entry.get("isAvailable") and
+                  version = tuple(int(p) for p in runtime.rsplit("iOS-", 1)[-1].split("-"))
+              if (entry.get("isAvailable") and
+                          version >= (17,) and
                           entry.get("state") == "Shutdown" and
                           "iPhone" in entry["name"]):
                       candidates.append((runtime, entry["udid"], entry["name"]))
@@ -193,7 +196,7 @@ jobs:
           retention-days: 7
 
       - name: Shut down owned Simulator and clean generated build artifacts
-        if: ${{ always() }}
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
         run: |
           set -euo pipefail
           if [[ -f "$QUAL_DIR/booted-udid" ]]; then
@@ -204,3 +207,7 @@ jobs:
           if [[ -d "$QUAL_DIR" && ! -L "$QUAL_DIR" && "$QUAL_DIR" == "$RUNNER_TEMP"/p0ng-native-* ]]; then
             rm -rf -- "$QUAL_DIR"
           fi
+          # Remove the generated Xcode project only; leave source, other
+          # checkouts, user files and caches untouched.
+          cd "$GITHUB_WORKSPACE"
+          git clean -fdx -- modern/p0ng-modern.xcodeproj

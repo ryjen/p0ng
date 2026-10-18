@@ -1,0 +1,224 @@
+# This workflow exists solely as a GitHub adapter for manual native qualification.
+# It does not change the automatic Linux or GitHub-hosted macOS workflows.
+# Require the private mac-mini-xcode label before dispatching: never fall back
+# to a generic self-hosted or organization-wide runner.
+name: p0ng manual Mac mini native qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Same-repository p0ng PR number (#36 or #37 initially)"
+        type: number
+        required: true
+      head_sha:
+        description: "Exact 40-character Git commit SHA of that PR head"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: p0ng-manual-mac-mini
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Native XCTest on trusted Intel Mac mini
+    runs-on: [self-hosted, macOS, X64, mac-mini-xcode]
+    timeout-minutes: 70
+    defaults:
+      run:
+        shell: bash
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+    steps:
+      - name: Authorize manual request and pin exact PR head (before checkout)
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Only the owner may dispatch this workflow; keep unreviewed fork
+          # code and workflow edits away from a persistent private Mac.
+          test "$GITHUB_REPOSITORY" = "ryjen/p0ng"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "ryjen"
+          # On rerun, github.actor remains the original user; enforce the
+          # actual triggering user too before allowing any PR checkout.
+          test "$GITHUB_TRIGGERING_ACTOR" = "ryjen"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          number = os.environ["PR_NUMBER"]
+          sha = os.environ["HEAD_SHA"]
+          if not re.fullmatch(r"[1-9][0-9]{0,6}", number):
+              raise SystemExit("Invalid PR number")
+          if not re.fullmatch(r"[a-f0-9]{40}", sha):
+              raise SystemExit("Provide a lowercase exact 40-character head SHA")
+          request = urllib.request.Request(
+              "https://api.github.com/repos/ryjen/p0ng/pulls/" + number,
+              headers={
+                  "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "p0ng-native-qualification",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              pr = json.load(response)
+          checks = {
+              "same repository": pr["head"]["repo"]["full_name"] == "ryjen/p0ng",
+              "target main": pr["base"]["ref"] == "main",
+              "open PR": pr["state"] == "open",
+              "exact head": pr["head"]["sha"] == sha,
+          }
+          failures = [name for name, ok in checks.items() if not ok]
+          if failures:
+              raise SystemExit("Refusing checkout: " + ", ".join(failures))
+          print("Qualified to checkout p0ng PR #" + number + " at " + sha)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("sha=" + sha + "\n")
+          PY
+          # runner.temp is unavailable to job-level env expressions; construct
+          # the unique path on the runner for all subsequent steps instead.
+          printf 'QUAL_DIR=%s\n' "$RUNNER_TEMP/p0ng-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
+      - name: Checkout verified exact commit without retained credentials
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.authorize.outputs.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Verify checkout and supported Xcode
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          mkdir -p "$QUAL_DIR"
+          for candidate in /Applications/Xcode_16.4.app/Contents/Developer /Applications/Xcode.app/Contents/Developer; do
+            if [[ -d "$candidate" ]] && [[ "$(DEVELOPER_DIR="$candidate" xcodebuild -version | head -n 1)" == "Xcode 16.4" ]]; then
+              echo "DEVELOPER_DIR=$candidate" >> "$GITHUB_ENV"
+              echo "Xcode selected: $candidate"
+              exit 0
+            fi
+          done
+          echo "Xcode 16.4 is required; no matching installation found" >&2
+          exit 1
+
+      - name: Download and verify pinned XcodeGen 2.46.0
+        run: |
+          set -euo pipefail
+          archive="$QUAL_DIR/xcodegen.zip"
+          destination="$QUAL_DIR/xcodegen"
+          curl --fail --location --silent --show-error --retry 3 --output "$archive" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $archive" | shasum -a 256 -c -
+          mkdir -p "$destination"
+          ditto -x -k "$archive" "$destination"
+          bin="$(find "$destination" -type f -name xcodegen | head -n 1)"
+          test -n "$bin"
+          test -x "$bin"
+          "$bin" --version | grep -F "2.46.0"
+          echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+
+      - name: Generate Xcode project
+        working-directory: modern
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+
+      - name: Build unsigned iOS Simulator app
+        working-directory: modern
+        run: |
+          set -euo pipefail
+          xcodebuild -project p0ng-modern.xcodeproj -scheme p0ng -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$QUAL_DIR/DerivedData" CODE_SIGNING_ALLOWED=NO build \
+            2>&1 | tee "$QUAL_DIR/build.log"
+
+      - name: Select and boot an available shutdown iPhone Simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available --json > "$QUAL_DIR/simulators.json"
+          python3 - <<'PY'
+          import json
+          import os
+          with open(os.path.join(os.environ["QUAL_DIR"], "simulators.json"), encoding="utf-8") as f:
+              devices = json.load(f)["devices"]
+          candidates = []
+          for runtime, entries in devices.items():
+              if not runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-"):
+                  continue
+              version = tuple(int(p) for p in runtime.rsplit("iOS-", 1)[-1].split("-"))
+              if version < (17,):
+                  continue
+              for entry in entries:
+                  if (entry.get("isAvailable") and
+                          entry.get("state") == "Shutdown" and
+                          "iPhone" in entry["name"]):
+                      candidates.append((version, runtime, entry["udid"], entry["name"]))
+          if not candidates:
+              raise SystemExit("No shutdown iOS iPhone Simulator available; install a runtime and retry")
+          version, runtime, device_id, name = sorted(candidates, reverse=True)[0]
+          print("Selected", runtime, name, device_id)
+          with open(os.path.join(os.environ["QUAL_DIR"], "selected-udid"), "w", encoding="utf-8") as selected:
+              selected.write(device_id + "\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("udid=" + device_id + "\n")
+          PY
+          # Step outputs are only available to subsequent steps, not within
+          # this step. Use the validated value from a scoped temp file.
+          DEVICE_ID="$(cat "$QUAL_DIR/selected-udid")"
+          xcrun simctl boot "$DEVICE_ID"
+          echo "$DEVICE_ID" > "$QUAL_DIR/booted-udid"
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+
+      - name: Run native coordinator XCTest and iOS UI smoke
+        id: native_tests
+        working-directory: modern
+        run: |
+          set -euo pipefail
+          xcodebuild -project p0ng-modern.xcodeproj -scheme p0ng -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath "$QUAL_DIR/DerivedData" \
+            -resultBundlePath "$QUAL_DIR/native.xcresult" \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO \
+            -only-testing:p0ngUnitTests -only-testing:p0ngUITests/P0ngSmokeUITests test \
+            2>&1 | tee "$QUAL_DIR/native-test.log"
+
+      - name: Attach bounded qualification evidence
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: p0ng-native-pr-${{ inputs.pr_number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/p0ng-native-${{ github.run_id }}-${{ github.run_attempt }}/build.log
+            ${{ runner.temp }}/p0ng-native-${{ github.run_id }}-${{ github.run_attempt }}/native-test.log
+            ${{ runner.temp }}/p0ng-native-${{ github.run_id }}-${{ github.run_attempt }}/native.xcresult
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Shut down owned Simulator and clean generated build artifacts
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if [[ -f "$QUAL_DIR/booted-udid" ]]; then
+            xcrun simctl shutdown "$(cat "$QUAL_DIR/booted-udid")" || true
+          fi
+          # Only remove this run's temporary output directory, never a source
+          # checkout, unrelated worktree, shared cache or existing Simulator.
+          if [[ -d "$QUAL_DIR" && ! -L "$QUAL_DIR" && "$QUAL_DIR" == "$RUNNER_TEMP"/p0ng-native-* ]]; then
+            rm -rf -- "$QUAL_DIR"
+          fi
+          # Remove the generated Xcode project only; leave source, other
+          # checkouts, user files and caches untouched.
+          cd "$GITHUB_WORKSPACE"
+          git clean -fdx -- modern/p0ng-modern.xcodeproj

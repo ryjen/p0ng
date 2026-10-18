@@ -35,7 +35,6 @@ jobs:
     env:
       PR_NUMBER: ${{ inputs.pr_number }}
       HEAD_SHA: ${{ inputs.head_sha }}
-      QUAL_DIR: ${{ runner.temp }}/p0ng-native-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Authorize manual request and pin exact PR head (before checkout)
         id: authorize
@@ -83,6 +82,9 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write("sha=" + sha + "\n")
           PY
+          # runner.temp is unavailable to job-level env expressions; construct
+          # the unique path on the runner for all subsequent steps instead.
+          printf 'QUAL_DIR=%s\n' "$RUNNER_TEMP/p0ng-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
       - name: Checkout verified exact commit without retained credentials
         id: checkout

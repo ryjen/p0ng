@@ -152,23 +152,29 @@ jobs:
           for runtime, entries in devices.items():
               if not runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-"):
                   continue
+              version = tuple(int(p) for p in runtime.rsplit("iOS-", 1)[-1].split("-"))
+              if version < (17,):
+                  continue
               for entry in entries:
-                  version = tuple(int(p) for p in runtime.rsplit("iOS-", 1)[-1].split("-"))
-              if (entry.get("isAvailable") and
-                          version >= (17,) and
+                  if (entry.get("isAvailable") and
                           entry.get("state") == "Shutdown" and
                           "iPhone" in entry["name"]):
-                      candidates.append((runtime, entry["udid"], entry["name"]))
+                      candidates.append((version, runtime, entry["udid"], entry["name"]))
           if not candidates:
               raise SystemExit("No shutdown iOS iPhone Simulator available; install a runtime and retry")
-          runtime, device_id, name = sorted(candidates, reverse=True)[0]
+          version, runtime, device_id, name = sorted(candidates, reverse=True)[0]
           print("Selected", runtime, name, device_id)
+          with open(os.path.join(os.environ["QUAL_DIR"], "selected-udid"), "w", encoding="utf-8") as selected:
+              selected.write(device_id + "\n")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("udid=" + device_id + "\n")
           PY
-          xcrun simctl boot "${{ steps.simulator.outputs.udid }}"
-          echo "${{ steps.simulator.outputs.udid }}" > "$QUAL_DIR/booted-udid"
-          xcrun simctl bootstatus "${{ steps.simulator.outputs.udid }}" -b
+          # Step outputs are only available to subsequent steps, not within
+          # this step. Use the validated value from a scoped temp file.
+          DEVICE_ID="$(cat "$QUAL_DIR/selected-udid")"
+          xcrun simctl boot "$DEVICE_ID"
+          echo "$DEVICE_ID" > "$QUAL_DIR/booted-udid"
+          xcrun simctl bootstatus "$DEVICE_ID" -b
 
       - name: Run native coordinator XCTest and iOS UI smoke
         id: native_tests

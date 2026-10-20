@@ -240,6 +240,76 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertGreaterThan(network.stops, 0)
     }
 
+    func testNonfiniteTouchInputLeavesLocalSimulationUnchanged() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.playSolo()
+        let before = model.state
+
+        model.movePaddle(y: .nan)
+        model.movePaddle(y: .infinity)
+        model.movePaddle(y: -.infinity, finished: true)
+
+        XCTAssertEqual(model.state, before)
+        XCTAssertTrue(network.messages.isEmpty,
+                      "Invalid touch coordinates must not produce network input")
+    }
+
+    func testFinishedGuestMatchRejectsTouchPredictionAndLateRelease() {
+        let network = FakeTransport()
+        let model = PongViewModel(transport: network)
+        model.browse()
+        let hostPeer = NearbyPeer(id: UUID(), displayName: "test-host")
+        network.onPeersChanged?([hostPeer])
+        model.join(hostPeer)
+        network.connected = true
+        network.onConnected?()
+
+        var host = MatchCoordinator()
+        host.startHosting()
+        let hello = network.messages.last!.packet
+        let welcome = host.acceptHandshake(hello).response!.packet
+        network.onPacket?(welcome)
+        let ready = network.messages.last!.packet
+        let start = host.acceptHandshake(ready).response!.packet
+        network.onPacket?(start)
+        let started = network.messages.last!.packet
+        XCTAssertTrue(host.acceptHandshake(started).accepted)
+        XCTAssertEqual(model.screen, .playing)
+        XCTAssertTrue(model.isReady)
+
+        // A local touch is rendered immediately while host gameplay is active.
+        model.movePaddle(y: 0.8)
+        XCTAssertEqual(model.state.rightPaddleY, 0.8, accuracy: 0.001)
+        let sendsBeforeWin = network.messages.count
+
+        var winner = PongSnapshot()
+        winner.leftScore = PongGame.winningScore
+        winner.phase = .finished
+        winner.serveRemaining = 0
+        winner.ballVX = 0
+        winner.ballVY = 0
+        network.onPacket?(MatchMessage(
+            kind: .snapshot, matchID: host.matchID!,
+            sequence: 1, state: winner))
+
+        // Completion must be published immediately, not delayed until
+        // another display refresh with an obsolete predicted paddle.
+        XCTAssertEqual(model.state, winner,
+                       "The terminal host state replaces local prediction immediately")
+        model.movePaddle(y: 0.1, finished: true)
+        XCTAssertEqual(model.state, winner,
+                       "A late touch must not overwrite the displayed winning state")
+        XCTAssertEqual(network.messages.count, sendsBeforeWin,
+                       "Completed games must not enqueue a reliable finger release")
+        // The next display refresh must not replay an old interpolated
+        // playing frame after the immediate terminal publication.
+        // The display-link callback itself is exercised in native tests.
+        XCTAssertEqual(model.state.phase, .finished)
+
+        XCTAssertTrue(model.isReady)
+    }
+
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {
         let network = FakeTransport()
         let model = PongViewModel(transport: network)

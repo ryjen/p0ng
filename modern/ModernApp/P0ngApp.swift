@@ -97,9 +97,12 @@ struct PongHomeView: View {
                         Text("\(model.state.leftScore > model.state.rightScore ? "LEFT" : "RIGHT") WINS")
                             .font(.title2.monospaced().bold())
                         menuButton("Play again", action: model.playAgain)
-                    } else if model.state.phase == .serving {
+                    } else {
+                        // Keep the court size stable when the serve countdown disappears.
                         Text("SERVE IN \(Int(ceil(model.state.serveRemaining)))")
                             .font(.headline.monospaced())
+                            .opacity(model.state.phase == .serving ? 1 : 0)
+                            .accessibilityHidden(model.state.phase != .serving)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -152,9 +155,10 @@ struct PongHomeView: View {
     // Center short menus, but allow long peer lists and compact-height menus
     // to scroll rather than compressing or clipping their controls.
     private func scrollingMenu<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        GeometryReader { space in
+        let menu = content()
+        return GeometryReader { space in
             ScrollView {
-                content()
+                menu
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: space.size.height)
             }

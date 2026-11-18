@@ -44,7 +44,7 @@ final class P0ngSmokeUITests: XCTestCase {
     }
 
     @MainActor
-    func testCourtFitsPortraitAndLandscape() {
+    func testCourtFitsPortraitAndLandscape() async throws {
         let device = XCUIDevice.shared
         device.orientation = .portrait
         defer { device.orientation = .portrait }
@@ -60,18 +60,22 @@ final class P0ngSmokeUITests: XCTestCase {
 
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             device.orientation = orientation
-            let fits = NSPredicate { _, _ in
+            // Keep XCTest element access on the main actor while rotation settles.
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(12))
+            var fits = false
+            repeat {
                 let window = app.frame
                 let frame = court.frame
                 let landscape = orientation == .landscapeLeft
-                return court.exists && (window.width > window.height) == landscape &&
+                fits = court.exists && (window.width > window.height) == landscape &&
                     frame.width > 0 && frame.height > 0 &&
                     abs(frame.width / frame.height - 16.0 / 9.0) < 0.05 &&
                     window.insetBy(dx: -1, dy: -1).contains(frame)
-            }
-            let expectation = XCTNSPredicateExpectation(predicate: fits, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 12), .completed,
-                           "The complete 16:9 court must remain visible after rotation")
+                if fits { break }
+                try await Task.sleep(for: .milliseconds(200))
+            } while clock.now < deadline
+            XCTAssertTrue(fits, "The complete 16:9 court must remain visible after rotation")
         }
 
         // Compact-height menus must keep all actions reachable after exiting.

@@ -297,17 +297,27 @@ final class PongCoordinatorUnitTests: XCTestCase {
         // another display refresh with an obsolete predicted paddle.
         XCTAssertEqual(model.state, winner,
                        "The terminal host state replaces local prediction immediately")
+        XCTAssertFalse(model.isDisplayClockRunning,
+                       "A completed match must not keep waking the display clock")
+        model.setInteractive(false)
+        model.setInteractive(true)
+        XCTAssertFalse(model.isDisplayClockRunning,
+                       "Returning to active must not restart a completed match")
         model.movePaddle(y: 0.1, finished: true)
         XCTAssertEqual(model.state, winner,
                        "A late touch must not overwrite the displayed winning state")
         XCTAssertEqual(network.messages.count, sendsBeforeWin,
                        "Completed games must not enqueue a reliable finger release")
-        // The next display refresh must not replay an old interpolated
-        // playing frame after the immediate terminal publication.
-        // The display-link callback itself is exercised in native tests.
         XCTAssertEqual(model.state.phase, .finished)
-
         XCTAssertTrue(model.isReady)
+
+        model.playAgain()
+        XCTAssertEqual(model.screen, .browsing)
+        XCTAssertFalse(model.isDisplayClockRunning)
+        model.playSolo()
+        XCTAssertEqual(model.state.phase, .serving)
+        XCTAssertTrue(model.isDisplayClockRunning,
+                      "A new match must reactivate the display clock")
     }
 
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {

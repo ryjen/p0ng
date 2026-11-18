@@ -188,7 +188,18 @@ public struct SnapshotPacketBatch {
 
     public mutating func drain() -> [OutgoingMessage] {
         var result = critical
-        if let latestRealtime { result.append(latestRealtime) }
+        if let latestRealtime {
+            if let lastCritical = critical.last {
+                // Reliable score/phase snapshots supersede older realtime state.
+                // Do not send stale packets after the authoritative transition.
+                if latestRealtime.packet.matchID == lastCritical.packet.matchID &&
+                   latestRealtime.packet.sequence > lastCritical.packet.sequence {
+                    result.append(latestRealtime)
+                }
+            } else {
+                result.append(latestRealtime)
+            }
+        }
         critical.removeAll(keepingCapacity: true)
         latestRealtime = nil
         return result

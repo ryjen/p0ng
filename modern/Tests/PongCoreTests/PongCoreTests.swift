@@ -306,6 +306,62 @@ final class PongCoreTests: XCTestCase {
             "Rejected packets must not consume sequence numbers")
     }
 
+    func testGuestRejectsScoreRegressionWithoutConsumingSequence() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        var initial = PongSnapshot()
+        initial.leftScore = 2
+        initial.rightScore = 1
+        initial.phase = .playing
+        initial.serveRemaining = 0
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: initial)))
+
+        var regressed = initial
+        regressed.leftScore = 1
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: regressed)))
+        XCTAssertEqual(guest.displayed, initial)
+
+        regressed = initial
+        regressed.rightScore = 0
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: regressed)))
+        XCTAssertEqual(guest.displayed, initial)
+
+        var next = initial
+        next.rightScore = 2
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: next)),
+            "Rejected rollback must not consume the next valid sequence")
+        XCTAssertEqual(guest.displayed, next)
+    }
+
+    func testGuestCannotReopenOrUpdateFinishedMatch() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        let id = connect(&host, &guest)
+        var winner = PongSnapshot()
+        winner.leftScore = PongGame.winningScore
+        winner.phase = .finished
+        winner.serveRemaining = 0
+        winner.ballVX = 0
+        winner.ballVY = 0
+        XCTAssertTrue(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 1, state: winner)))
+
+        var reopening = PongSnapshot()
+        reopening.leftScore = PongGame.winningScore - 1
+        reopening.phase = .playing
+        reopening.serveRemaining = 0
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 2, state: reopening)))
+        XCTAssertFalse(guest.receive(MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 3, state: winner)),
+            "Even a later terminal snapshot cannot mutate a completed match")
+        XCTAssertEqual(guest.displayed, winner)
+        XCTAssertTrue(guest.ready, "Completed match remains ready until reset or disconnect")
+    }
+
     func testGuestRejectsImpossibleScoreAndPhaseWithoutAdvancingSequence() {
         var host = MatchCoordinator(), guest = MatchCoordinator()
         let id = connect(&host, &guest)
@@ -357,6 +413,41 @@ final class PongCoreTests: XCTestCase {
 
         XCTAssertTrue(guest.acceptHandshake(MatchMessage(
             kind: .welcome, matchID: id, sequence: 0, state: PongSnapshot())).accepted)
+        XCTAssertEqual(guest.matchID, id)
+    }
+
+    func testGuestWelcomeRequiresInitialHostState() {
+        var host = MatchCoordinator(), guest = MatchCoordinator()
+        host.startHosting()
+        guest.startJoining()
+        let id = host.matchID!
+
+        var completed = PongSnapshot()
+        completed.leftScore = PongGame.winningScore
+        completed.phase = .finished
+        completed.serveRemaining = 0
+        completed.ballVX = 0
+        completed.ballVY = 0
+
+        var running = PongSnapshot()
+        running.phase = .playing
+        running.serveRemaining = 0
+
+        var scored = PongSnapshot()
+        scored.rightScore = 1
+
+        for state in [completed, running, scored] {
+            XCTAssertFalse(guest.acceptHandshake(MatchMessage(
+                kind: .welcome, matchID: id, sequence: 0, state: state)).accepted,
+                "A fresh match cannot begin from a progressed game snapshot")
+            XCTAssertNil(guest.matchID, "Rejected welcome must not bind an identity")
+            XCTAssertFalse(guest.ready)
+        }
+
+        let hello = guest.handshakeRetry()!.packet
+        let welcome = host.acceptHandshake(hello)
+        XCTAssertTrue(welcome.accepted)
+        XCTAssertTrue(guest.acceptHandshake(welcome.response!.packet).accepted)
         XCTAssertEqual(guest.matchID, id)
     }
 
@@ -553,6 +644,47 @@ extension PongCoreTests {
         XCTAssertEqual(outputs[0].packet.sequence, 3)
         XCTAssertTrue(guest.receive(outputs[0].packet))
         XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testSnapshotBatchDropsRealtimeOlderThanReliableTransition() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .realtime))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 11, state: PongSnapshot()),
+            quality: .reliable))
+        XCTAssertEqual(batch.drain().map { $0.packet.sequence }, [11],
+                       "A newer reliable transition supersedes old realtime state")
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testSnapshotBatchKeepsRealtimeAfterLastReliableTransition() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .reliable))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 11, state: PongSnapshot()),
+            quality: .realtime))
+        XCTAssertEqual(batch.drain().map { $0.packet.sequence }, [10, 11],
+                       "Newer realtime state remains valid after a reliable phase change")
+        XCTAssertTrue(batch.drain().isEmpty)
+    }
+
+    func testSnapshotBatchNeverMixesRealtimeFromDifferentMatches() {
+        let id = UUID()
+        var batch = SnapshotPacketBatch()
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: id, sequence: 10, state: PongSnapshot()),
+            quality: .reliable))
+        batch.append(OutgoingMessage(packet: MatchMessage(
+            kind: .snapshot, matchID: UUID(), sequence: 11, state: PongSnapshot()),
+            quality: .realtime))
+        XCTAssertEqual(batch.drain().map { $0.packet.matchID }, [id],
+                       "A catch-up batch cannot append stale state from another match")
     }
 
     func testCatchupSnapshotBatchPreservesCriticalScoreAndPhase() {

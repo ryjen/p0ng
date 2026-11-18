@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// Simulator-only UI smoke checks. Do not claim to validate physical peer pairing.
 final class P0ngSmokeUITests: XCTestCase {
@@ -40,6 +41,47 @@ final class P0ngSmokeUITests: XCTestCase {
         XCTAssertTrue(announced.localizedCaseInsensitiveContains("right"))
         XCTAssertTrue(announced.localizedCaseInsensitiveContains("solo"),
                       "Combining score elements must not hide the current player role")
+    }
+
+    @MainActor
+    func testCourtFitsPortraitAndLandscape() {
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        defer { device.orientation = .portrait }
+
+        let app = XCUIApplication()
+        app.launch()
+        let play = app.buttons["Play against computer"]
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        play.tap()
+
+        let court = app.descendants(matching: .any)["pong.court"]
+        XCTAssertTrue(court.waitForExistence(timeout: 8))
+
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            device.orientation = orientation
+            let fits = NSPredicate { _, _ in
+                let window = app.frame
+                let frame = court.frame
+                let landscape = orientation == .landscapeLeft
+                return court.exists && (window.width > window.height) == landscape &&
+                    frame.width > 0 && frame.height > 0 &&
+                    abs(frame.width / frame.height - 16.0 / 9.0) < 0.05 &&
+                    window.insetBy(dx: -1, dy: -1).contains(frame)
+            }
+            let expectation = XCTNSPredicateExpectation(predicate: fits, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 12), .completed,
+                           "The complete 16:9 court must remain visible after rotation")
+        }
+
+        // Compact-height menus must keep all actions reachable after exiting.
+        app.buttons["Exit"].tap()
+        XCTAssertTrue(app.buttons["Play against computer"].waitForExistence(timeout: 8))
+        let haptics = app.switches["Haptic feedback"]
+        for _ in 0..<4 where !haptics.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(haptics.isHittable)
     }
 
     @MainActor

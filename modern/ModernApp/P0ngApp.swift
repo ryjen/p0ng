@@ -19,11 +19,14 @@ struct PongHomeView: View {
     @AppStorage("p0ng.soundEnabled") private var soundEnabled = true
     @AppStorage("p0ng.hapticsEnabled") private var hapticsEnabled = true
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var compactHeight: Bool { verticalSizeClass == .compact }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: compactHeight ? 6 : 18) {
             HStack {
-                Text("p0ng").accessibilityIdentifier("pong.title").font(.system(size: 34, weight: .black, design: .monospaced))
+                Text("p0ng").accessibilityIdentifier("pong.title").font(.system(size: compactHeight ? 22 : 34, weight: .black, design: .monospaced))
                 Spacer()
                 if model.screen != .menu {
                     Button("Exit") { model.leave() }
@@ -34,36 +37,38 @@ struct PongHomeView: View {
 
             switch model.screen {
             case .menu:
-                VStack(spacing: 18) {
-                    Text("RETRO PADDLES · MODERN NETWORKING")
-                        .font(.caption.monospaced()).foregroundStyle(Retro.foreground)
-                    menuButton("Play against computer", action: model.playSolo)
-                    menuButton("Host nearby match", action: model.host)
-                    menuButton("Join nearby match", action: model.browse)
-                    Toggle("Sound effects", isOn: $soundEnabled)
-                        .frame(maxWidth: 340)
-                    Toggle("Haptic feedback", isOn: $hapticsEnabled)
-                        .frame(maxWidth: 340)
+                scrollingMenu {
+                    VStack(spacing: 18) {
+                        Text("RETRO PADDLES · MODERN NETWORKING")
+                            .font(.caption.monospaced()).foregroundStyle(Retro.foreground)
+                        menuButton("Play against computer", action: model.playSolo)
+                        menuButton("Host nearby match", action: model.host)
+                        menuButton("Join nearby match", action: model.browse)
+                        Toggle("Sound effects", isOn: $soundEnabled)
+                            .frame(maxWidth: 340)
+                        Toggle("Haptic feedback", isOn: $hapticsEnabled)
+                            .frame(maxWidth: 340)
+                    }
                 }
-                .frame(maxHeight: .infinity)
             case .hosting:
                 waiting("Hosting · Waiting for a player")
             case .connecting:
                 waiting("Connecting · Waiting for host")
             case .browsing:
-                VStack(spacing: 18) {
-                    Text("Nearby hosts").font(.title3.monospaced())
-                    if model.peers.isEmpty {
-                        Text("Searching on your local network…")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(model.peers) { peer in
-                        menuButton(peer.displayName) { model.join(peer) }
+                scrollingMenu {
+                    VStack(spacing: 18) {
+                        Text("Nearby hosts").font(.title3.monospaced())
+                        if model.peers.isEmpty {
+                            Text("Searching on your local network…")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(model.peers) { peer in
+                            menuButton(peer.displayName) { model.join(peer) }
+                        }
                     }
                 }
-                .frame(maxHeight: .infinity)
             case .playing:
-                VStack(spacing: 12) {
+                VStack(spacing: compactHeight ? 4 : 12) {
                     HStack {
                         Text("\(model.state.leftScore)")
                         Spacer()
@@ -72,15 +77,22 @@ struct PongHomeView: View {
                         Spacer()
                         Text("\(model.state.rightScore)")
                     }
-                    .font(.title.monospacedDigit().bold())
+                    .font((compactHeight ? Font.title2 : Font.title).monospacedDigit().bold())
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Scoreboard")
                     .accessibilityValue("\(model.roleLabel). Left \(model.state.leftScore), right \(model.state.rightScore)")
                     .accessibilityIdentifier("pong.scoreboard")
-                    CourtView(snapshot: model.state, playingRight: model.isGuest) {
-                        model.movePaddle(y: $0, finished: $1)
+                    // Fit the actual remaining space, not just the proposed width.
+                    // The inner court geometry also defines the touch coordinate space.
+                    GeometryReader { space in
+                        let aspect: CGFloat = 16.0 / 9.0
+                        let width = max(0, min(space.size.width, space.size.height * aspect))
+                        CourtView(snapshot: model.state, playingRight: model.isGuest) {
+                            model.movePaddle(y: $0, finished: $1)
+                        }
+                        .frame(width: width, height: width / aspect)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .aspectRatio(16 / 9, contentMode: .fit)
                     if model.state.phase == .finished {
                         Text("\(model.state.leftScore > model.state.rightScore ? "LEFT" : "RIGHT") WINS")
                             .font(.title2.monospaced().bold())
@@ -93,7 +105,8 @@ struct PongHomeView: View {
                 .frame(maxHeight: .infinity)
             }
         }
-        .padding(22)
+        .padding(.horizontal, 22)
+        .padding(.vertical, compactHeight ? 6 : 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Retro.background)
         .onChange(of: scenePhase) { _, newPhase in
@@ -132,6 +145,18 @@ struct PongHomeView: View {
                 Text("Allow \(peer) to join your match?")
             } else {
                 Text(model.message ?? "")
+            }
+        }
+    }
+
+    // Center short menus, but allow long peer lists and compact-height menus
+    // to scroll rather than compressing or clipping their controls.
+    private func scrollingMenu<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        GeometryReader { space in
+            ScrollView {
+                content()
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: space.size.height)
             }
         }
     }
@@ -217,6 +242,7 @@ struct CourtView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(playingRight ? "Right paddle" : "Left paddle")
+            .accessibilityIdentifier("pong.court")
             .accessibilityValue("\(Int((localPaddle * 100).rounded())) percent court height")
             .accessibilityHint("Drag vertically, or swipe up and down with VoiceOver to adjust")
             .accessibilityAdjustableAction { direction in

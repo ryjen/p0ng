@@ -44,7 +44,7 @@ final class P0ngSmokeUITests: XCTestCase {
     }
 
     @MainActor
-    func testCourtFitsPortraitAndLandscape() async throws {
+    func testCourtFitsPortraitAndLandscape() {
         let device = XCUIDevice.shared
         device.orientation = .portrait
         defer { device.orientation = .portrait }
@@ -57,33 +57,39 @@ final class P0ngSmokeUITests: XCTestCase {
 
         let court = app.descendants(matching: .any)["pong.court"]
         XCTAssertTrue(court.waitForExistence(timeout: 8))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
 
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             device.orientation = orientation
-            // Keep XCTest element access on the main actor while rotation settles.
+            // Keep polling synchronous: an asynchronously interrupted XCTest
+            // must not continue issuing queries against the following test's app.
             let clock = ContinuousClock()
             let deadline = clock.now.advanced(by: .seconds(12))
+            var windowFrame = CGRect.zero
+            var courtFrame = CGRect.zero
             var fits = false
             repeat {
-                let window = app.frame
-                let frame = court.frame
+                windowFrame = window.frame
+                courtFrame = court.frame
                 let landscape = orientation == .landscapeLeft
-                fits = court.exists && (window.width > window.height) == landscape &&
-                    frame.width > 0 && frame.height > 0 &&
-                    abs(frame.width / frame.height - 16.0 / 9.0) < 0.05 &&
-                    window.insetBy(dx: -1, dy: -1).contains(frame)
+                fits = court.exists && (windowFrame.width > windowFrame.height) == landscape &&
+                    courtFrame.width > 0 && courtFrame.height > 0 &&
+                    abs(courtFrame.width / courtFrame.height - 16.0 / 9.0) < 0.05 &&
+                    windowFrame.insetBy(dx: -1, dy: -1).contains(courtFrame)
                 if fits { break }
-                try await Task.sleep(for: .milliseconds(200))
+                Thread.sleep(forTimeInterval: 0.2)
             } while clock.now < deadline
-            XCTAssertTrue(fits, "The complete 16:9 court must remain visible after rotation")
+            XCTAssertTrue(fits, "Expected fully visible 16:9 court; orientation=\(orientation.rawValue), window=\(windowFrame), court=\(courtFrame)")
         }
 
-        // Compact-height menus must keep all actions reachable after exiting.
         app.buttons["Exit"].tap()
         XCTAssertTrue(app.buttons["Play against computer"].waitForExistence(timeout: 8))
         let haptics = app.switches["Haptic feedback"]
+        let menu = app.scrollViews.firstMatch
+        XCTAssertTrue(menu.exists)
         for _ in 0..<4 where !haptics.isHittable {
-            app.swipeUp()
+            menu.swipeUp()
         }
         XCTAssertTrue(haptics.isHittable)
     }

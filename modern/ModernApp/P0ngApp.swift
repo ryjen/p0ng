@@ -244,17 +244,17 @@ struct CourtView: View {
             .onChange(of: fingerDown) { oldValue, newValue in
                 if oldValue && !newValue { releaseIfNeeded() }
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(playingRight ? "Right paddle" : "Left paddle")
-            .accessibilityIdentifier("pong.court")
-            .accessibilityValue("\(Int((localPaddle * 100).rounded())) percent court height")
-            .accessibilityHint("Drag vertically, or swipe up and down with VoiceOver to adjust")
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: move(min(1 - PongGame.paddleHeight / 2, localPaddle + 0.06), true)
-                case .decrement: move(max(PongGame.paddleHeight / 2, localPaddle - 0.06), true)
-                @unknown default: break
-                }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(playingRight ? "Right paddle" : "Left paddle")
+        .accessibilityIdentifier("pong.court")
+        .accessibilityValue("\(Int((localPaddle * 100).rounded())) percent court height")
+        .accessibilityHint("Drag vertically, or swipe up and down with VoiceOver to adjust")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: move(min(1 - PongGame.paddleHeight / 2, localPaddle + 0.06), true)
+            case .decrement: move(max(PongGame.paddleHeight / 2, localPaddle - 0.06), true)
+            @unknown default: break
             }
         }
     }

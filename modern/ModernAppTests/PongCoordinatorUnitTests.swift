@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 import MultipeerConnectivity
 import PongCore
 @testable import p0ng
@@ -348,6 +349,22 @@ extension PongCoordinatorUnitTests {
         model.setInteractive(false)
         model.setInteractive(true)
         XCTAssertFalse(model.isDisplayClockRunning)
+    }
+
+    func testLaunchScreenAndIPadOrientationsArePackaged() throws {
+        let info = try XCTUnwrap(Bundle.main.infoDictionary)
+        let launchScreen = try XCTUnwrap(info["UILaunchScreen"] as? [String: Any])
+        let colorName = try XCTUnwrap(launchScreen["UIColorName"] as? String)
+        XCTAssertEqual(colorName, "LaunchBackground")
+        XCTAssertNotNil(UIColor(named: colorName, in: .main, compatibleWith: nil))
+        let iPad = try XCTUnwrap(info["UISupportedInterfaceOrientations~ipad"] as? [String])
+        XCTAssertEqual(Set(iPad), Set([
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationPortraitUpsideDown",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight"
+        ]))
+        XCTAssertFalse(info["UIRequiresFullScreen"] as? Bool ?? false)
     }
 
     func testPrivacyManifestIsPackagedAndDeclaresLocalAPIAccess() throws {

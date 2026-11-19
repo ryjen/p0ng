@@ -6,8 +6,8 @@ This is an integration candidate. Automated qualification covers portable game l
 
 - [PR #43](https://github.com/ryjen/p0ng/pull/43) at `156e97aabd063df9a57b4bb97e520b114bda3dfe`, synthetic merge into `645f4d8b`: [hosted CI 44419425549](https://github.com/ryjen/p0ng/actions/runs/44419425549) **63/63 portable, 17/17 native, 4/4 UI**. Zero failures. This is evidence for that exact application source, not for future commits or a signed artifact.
 - [Niobium run 44404847337](https://github.com/ryjen/p0ng/actions/runs/44404847337) checked out #36 `2612feee876daf37c346ef89529dd83d58d9934f` and passed Xcode 26.3 unsigned Simulator build, 15 coordinator and 3 UI tests. This is not qualification of the full #43 integration on Niobium.
-- [PR #44](https://github.com/ryjen/p0ng/pull/44) at `ffd56c7ec1997e10a656f727d22ad8780674aaa0`: [hosted CI attempt 2](https://github.com/ryjen/p0ng/actions/runs/44431898919) **63/63 portable, 18/18 native, 4/4 UI**. Privacy manifest included in the application bundle and tested. #43 and #44 merged with independent exact-head review CLEAR; receiving `main` `bd1964241373d740392a13afef3f717fb8bd1020` has the identical final tree. Receiving-main [CI 44434565713](https://github.com/ryjen/p0ng/actions/runs/44434565713) must be checked for its final result.
-- Release preparation also declares an asset-backed launch screen and complete iPad orientation support without opting out of multitasking. This successor needs its own CI, independent review and device/resizing acceptance; it is not qualified by #44's tests.
+- [PR #44](https://github.com/ryjen/p0ng/pull/44) at `ffd56c7ec1997e10a656f727d22ad8780674aaa0`: [hosted CI attempt 2](https://github.com/ryjen/p0ng/actions/runs/44431898919) **63/63 portable, 18/18 native, 4/4 UI**. Privacy manifest included in the application bundle and tested. #43 and #44 merged with independent exact-head review CLEAR; receiving `main` `bd1964241373d740392a13afef3f717fb8bd1020` has the identical final tree. Receiving-main [CI 44434565713](https://github.com/ryjen/p0ng/actions/runs/44434565713) passed **63/63 portable, 18/18 native, 4/4 UI** at that exact commit.
+- Release preparation also declares an asset-backed launch screen and complete iPad orientation support without opting out of multitasking. [PR #45 attempt 1](https://github.com/ryjen/p0ng/actions/runs/44435365568) exposed missing launch metadata in the packed app. XcodeGen `info.path` generates the plist; the repair uses the tracked plist via `INFOPLIST_FILE`, not a generated duplicate. Native regression now reads the actual bundled plist and checks Bonjour, permission usage text, version, iPhone/iPad orientations, launch color and required device capabilities. This successor needs its own CI, independent review and device/resizing acceptance; it is not qualified by #44's passing tests.
 
 ## Release packaging and owner decisions
 
@@ -30,6 +30,8 @@ xcrun --sdk iphoneos --show-sdk-version
 cd modern
 xcodegen --version
 xcodegen generate --spec project.yml
+# Generation must not rewrite the tracked application metadata.
+git diff --exit-code -- ModernApp/Info.plist
 # Unsigned device-SDK Release archive only; no install, account or store effects.
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/p0ng-qualify.XXXXXX")"
 xcodebuild -project p0ng-modern.xcodeproj -scheme p0ng \
@@ -41,6 +43,9 @@ APP="$OUT/p0ng.xcarchive/Products/Applications/p0ng.app"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :UILaunchScreen' "$APP/Info.plist"
 plutil -lint "$APP/PrivacyInfo.xcprivacy"
 test -f "$APP/offthepaddle.wav" && test -f "$APP/offthewall.wav"
 shasum -a 256 "$APP/p0ng" "$APP/Info.plist" "$APP/PrivacyInfo.xcprivacy"

@@ -20,10 +20,12 @@ targets:
       testTargets:
         - p0ngUnitTests
         - p0ngUITests
-    info:
-      path: ModernApp/Info.plist
     settings:
       base:
+        # XcodeGen's info.path generates/replaces the plist. Use the tracked
+        # file directly so launch, Bonjour and permission metadata survive.
+        INFOPLIST_FILE: ModernApp/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.micrantha.p0ng.modern
         SWIFT_VERSION: '6.0'
         SWIFT_STRICT_CONCURRENCY: complete

@@ -18,16 +18,17 @@ A personal retro Pong experiment in Swift, now with a separate modern iOS implem
 
 ### Test the portable core
 
-With an appropriate Swift toolchain:
+With Swift 6 (hosted CI pins 6.2.1), from the repository root:
 
 ```sh
-cd modern
-swift test
+swift test --package-path modern
 ```
+
+The root `Package.swift` is retained legacy metadata, not the active modern build entrypoint.
 
 ### Build the iOS project
 
-On macOS with Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+On macOS, use the hosted CI baseline Xcode 16.4 (Swift 6) and [XcodeGen 2.46.0](https://github.com/yonaskolb/XcodeGen/releases/tag/2.46.0). The separately qualified Intel Mac mini path uses Xcode 26.3; see `modern/VALIDATION.md`.
 
 ```sh
 cd modern

@@ -350,6 +350,27 @@ extension PongCoordinatorUnitTests {
         XCTAssertFalse(model.isDisplayClockRunning)
     }
 
+    func testPrivacyManifestIsPackagedAndDeclaresLocalAPIAccess() throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "PrivacyInfo", withExtension: "xcprivacy"))
+        let data = try Data(contentsOf: url)
+        let manifest = try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil) as? [String: Any])
+        XCTAssertEqual(manifest["NSPrivacyTracking"] as? Bool, false)
+        XCTAssertEqual(manifest["NSPrivacyTrackingDomains"] as? [String], [])
+        XCTAssertEqual((manifest["NSPrivacyCollectedDataTypes"] as? [[String: Any]])?.count, 0)
+        let entries = try XCTUnwrap(manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]])
+        var reasons: [String: [String]] = [:]
+        for entry in entries {
+            let category = try XCTUnwrap(entry["NSPrivacyAccessedAPIType"] as? String)
+            XCTAssertNil(reasons[category], "Duplicate required-reason category")
+            reasons[category] = try XCTUnwrap(entry["NSPrivacyAccessedAPITypeReasons"] as? [String])
+        }
+        XCTAssertEqual(reasons, [
+            "NSPrivacyAccessedAPICategoryUserDefaults": ["CA92.1"],
+            "NSPrivacyAccessedAPICategorySystemBootTime": ["35F9.1"]
+        ])
+    }
+
     func testLegacySoundResourcesArePackagedIntoModernApp() {
         XCTAssertNotNil(Bundle.main.url(forResource: "offthepaddle", withExtension: "wav"))
         XCTAssertNotNil(Bundle.main.url(forResource: "offthewall", withExtension: "wav"))

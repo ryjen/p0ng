@@ -27,7 +27,7 @@ Run `swift test` for cross-platform protocol and physics tests. See `VALIDATION.
 
 This integration candidate supports local-area two-player matches, **not internet matchmaking or Game Center**. The host broadcasts authoritative snapshots at 30 Hz; the guest now interpolates render-only positions at the native refresh cadence, and locally predicts then gently reconciles its own paddle. At present the two-player match is all-or-nothing on disconnect. The historical `p0ng.xcodeproj` is not overwritten. Preserve its implementation and assets until device parity is confirmed.
 
-The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS Simulator (launch, solo mode, exit, menu). Simulator tests cannot establish that MultipeerConnectivity works between physical devices.
+The hosted macOS validation workflow also runs XCTest UI smoke checks in an iOS Simulator (launch, solo mode, exit, menu, scoreboard and portrait/landscape court layout). Simulator tests cannot establish that MultipeerConnectivity works between physical devices.
 
 ## Performance candidate
 
@@ -45,6 +45,8 @@ and default on; toggles persist through native AppStorage. An inbound 120-messag
 second decoding budget protects the main UI actor from excessive peer traffic.
 Neither the icon's App Store metadata nor in-person audio/haptic behavior is
 claimed release-qualified until physical-device verification.
+
+The app bundles `PrivacyInfo.xcprivacy`: standard defaults are used only for local sound/haptic preferences; monotonic system uptime is used for local elapsed-time calculations and admission budgets. No tracking or developer-side data collection is implemented in the inspected modern LAN slice. Validate the generated archive and Xcode privacy report before declaring App Store privacy answers.
 
 ## Swift 6 isolation boundary
 

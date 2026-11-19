@@ -1,6 +1,20 @@
 # p0ng modernization: release qualification
 
-This is an integration candidate. The Foundation game engine passes portable tests and three native iOS Simulator XCTest UI smoke cases pass on GitHub-hosted macOS. This verifies launch/solo/menu behavior, **not** nearby peer discovery or actual multiplayer responsiveness. Two physical devices and baseline/comparison performance measurements remain required before release.
+This is an integration candidate. Automated qualification covers portable game logic, native coordinator behavior, and four hosted iOS Simulator UI smoke cases including rotation. It does **not** establish nearby peer discovery or actual multiplayer responsiveness. Two physical devices and baseline/comparison performance measurements remain required before release.
+
+## Latest integrated evidence (2026-11-18)
+
+- [PR #43](https://github.com/ryjen/p0ng/pull/43) at `156e97aabd063df9a57b4bb97e520b114bda3dfe`, synthetic merge into `645f4d8b`: [hosted CI 44419425549](https://github.com/ryjen/p0ng/actions/runs/44419425549) **63/63 portable, 17/17 native, 4/4 UI**. Zero failures. This is evidence for that exact application source, not for future commits or a signed artifact.
+- [Niobium run 44404847337](https://github.com/ryjen/p0ng/actions/runs/44404847337) checked out #36 `2612feee876daf37c346ef89529dd83d58d9934f` and passed Xcode 26.3 unsigned Simulator build, 15 coordinator and 3 UI tests. This is not qualification of the full #43 integration on Niobium.
+- The release-preparation change following #43 adds a bundled privacy manifest and resource test; its own qualification is required.
+
+## Release packaging and owner decisions
+
+- [ ] Confirm distribution rights and source licensing intent. The repository has no explicit LICENSE in the inspected tree. The original WAVs and most icons match legacy Git blobs; this proves provenance within the repository, not redistribution rights. Preserve legacy master and existing assets until signed-device parity is established.
+- [ ] Confirm final bundle identifier, signing team, marketing version and unique build number (current plist: `com.micrantha.p0ng.modern` via build setting, version `1.0`, build `1`). Do not change registration or signing identities without owner approval.
+- [ ] Inspect `PrivacyInfo.xcprivacy` in the archived app and generate the Xcode Organizer privacy report. Source review identified app-only `UserDefaults`/`AppStorage` (`CA92.1`) and elapsed-time use of `ProcessInfo.systemUptime`/`CACurrentMediaTime` (`35F9.1`). No timestamps from uptime are sent to peers. Current first-party source has no analytics or tracking backend; validate actual archive and privacy answers separately. [Apple required reason APIs](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+- [ ] Verify current App Store Connect SDK submission requirements, privacy answers, export-compliance classification (including MCSession encryption), icon, screenshots, and signed-device acceptance. No TestFlight upload or production release without approval.
+- [ ] Record archive revision, toolchain, signing identity (nonsecret reference), device models/iOS, acceptance outcomes, and independent review before requesting release approval.
 
 ## Build gates
 

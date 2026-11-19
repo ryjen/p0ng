@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 import MultipeerConnectivity
 import PongCore
 @testable import p0ng
@@ -348,6 +349,39 @@ extension PongCoordinatorUnitTests {
         model.setInteractive(false)
         model.setInteractive(true)
         XCTAssertFalse(model.isDisplayClockRunning)
+    }
+
+    func testApplicationMetadataIsPackaged() throws {
+        // Read the packaged file, not a device-filtered Bundle dictionary.
+        // The source plist alone cannot prove XcodeGen preserved its values.
+        let data = try Data(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Info.plist"))
+        let info = try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil) as? [String: Any])
+        XCTAssertEqual(info["CFBundleIdentifier"] as? String, "com.micrantha.p0ng.modern")
+        XCTAssertEqual(info["CFBundleShortVersionString"] as? String, "1.0")
+        XCTAssertEqual(info["CFBundleVersion"] as? String, "1")
+        XCTAssertEqual(info["NSBonjourServices"] as? [String], ["_p0ng-lan._tcp"])
+        let usage = try XCTUnwrap(info["NSLocalNetworkUsageDescription"] as? String)
+        XCTAssertFalse(usage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertEqual(info["UIRequiredDeviceCapabilities"] as? [String], ["arm64"])
+        let phone = try XCTUnwrap(info["UISupportedInterfaceOrientations"] as? [String])
+        XCTAssertEqual(Set(phone), Set([
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight"
+        ]))
+        let launchScreen = try XCTUnwrap(info["UILaunchScreen"] as? [String: Any])
+        let colorName = try XCTUnwrap(launchScreen["UIColorName"] as? String)
+        XCTAssertEqual(colorName, "LaunchBackground")
+        XCTAssertNotNil(UIColor(named: colorName, in: .main, compatibleWith: nil))
+        let iPad = try XCTUnwrap(info["UISupportedInterfaceOrientations~ipad"] as? [String])
+        XCTAssertEqual(Set(iPad), Set([
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationPortraitUpsideDown",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight"
+        ]))
+        XCTAssertFalse(info["UIRequiresFullScreen"] as? Bool ?? false)
     }
 
     func testPrivacyManifestIsPackagedAndDeclaresLocalAPIAccess() throws {

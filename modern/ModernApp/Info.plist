@@ -13,8 +13,17 @@
   <key>NSLocalNetworkUsageDescription</key><string>Find a nearby player for a private two-player p0ng match.</string>
   <key>NSBonjourServices</key><array><string>_p0ng-lan._tcp</string></array>
   <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+  <key>UILaunchScreen</key><dict>
+    <key>UIColorName</key><string>LaunchBackground</string>
+  </dict>
   <key>UISupportedInterfaceOrientations</key><array>
     <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key><array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>

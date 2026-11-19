@@ -6,7 +6,8 @@ This is an integration candidate. Automated qualification covers portable game l
 
 - [PR #43](https://github.com/ryjen/p0ng/pull/43) at `156e97aabd063df9a57b4bb97e520b114bda3dfe`, synthetic merge into `645f4d8b`: [hosted CI 44419425549](https://github.com/ryjen/p0ng/actions/runs/44419425549) **63/63 portable, 17/17 native, 4/4 UI**. Zero failures. This is evidence for that exact application source, not for future commits or a signed artifact.
 - [Niobium run 44404847337](https://github.com/ryjen/p0ng/actions/runs/44404847337) checked out #36 `2612feee876daf37c346ef89529dd83d58d9934f` and passed Xcode 26.3 unsigned Simulator build, 15 coordinator and 3 UI tests. This is not qualification of the full #43 integration on Niobium.
-- The release-preparation change following #43 adds a bundled privacy manifest and resource test; its own qualification is required.
+- [PR #44](https://github.com/ryjen/p0ng/pull/44) at `ffd56c7ec1997e10a656f727d22ad8780674aaa0`: [hosted CI attempt 2](https://github.com/ryjen/p0ng/actions/runs/44431898919) **63/63 portable, 18/18 native, 4/4 UI**. Privacy manifest included in the application bundle and tested. #43 and #44 merged with independent exact-head review CLEAR; receiving `main` `bd1964241373d740392a13afef3f717fb8bd1020` has the identical final tree. Receiving-main [CI 44434565713](https://github.com/ryjen/p0ng/actions/runs/44434565713) passed **63/63 portable, 18/18 native, 4/4 UI** at that exact commit.
+- Release preparation also declares an asset-backed launch screen and complete iPad orientation support without opting out of multitasking. [PR #45 attempt 1](https://github.com/ryjen/p0ng/actions/runs/44435365568) exposed missing launch metadata in the packed app. XcodeGen `info.path` generates the plist; the repair uses the tracked plist via `INFOPLIST_FILE`, not a generated duplicate. Native regression now reads the actual bundled plist and checks Bonjour, permission usage text, version, iPhone/iPad orientations, launch color and required device capabilities. This successor needs its own CI, independent review and device/resizing acceptance; it is not qualified by #44's passing tests.
 
 ## Release packaging and owner decisions
 
@@ -15,6 +16,61 @@ This is an integration candidate. Automated qualification covers portable game l
 - [ ] Inspect `PrivacyInfo.xcprivacy` in the archived app and generate the Xcode Organizer privacy report. Source review identified app-only `UserDefaults`/`AppStorage` (`CA92.1`) and elapsed-time use of `ProcessInfo.systemUptime`/`CACurrentMediaTime` (`35F9.1`). No timestamps from uptime are sent to peers. Current first-party source has no analytics or tracking backend; validate actual archive and privacy answers separately. [Apple required reason APIs](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
 - [ ] Verify current App Store Connect SDK submission requirements, privacy answers, export-compliance classification (including MCSession encryption), icon, screenshots, and signed-device acceptance. No TestFlight upload or production release without approval.
 - [ ] Record archive revision, toolchain, signing identity (nonsecret reference), device models/iOS, acceptance outcomes, and independent review before requesting release approval.
+
+## Operator handoff: release-SDK preflight and device run
+
+Apple requires Xcode 26 or later and the iOS/iPadOS 26 SDK or later for uploads since April 28, 2026 ([SDK requirements](https://developer.apple.com/news/upcoming-requirements/?id=04282026a)). Hosted Xcode 16.4 is a regression gate, not a qualifying submission SDK. The already installed Niobium Xcode 26.3 is the proposed release preflight toolchain; preserve the iOS 17 deployment target. Use an isolated checkout at the eventual accepted release SHA (not the unreviewed branch, an old PR or a dirty canonical checkout). On that operator-controlled Mac, with the existing verified XcodeGen 2.46.0 install:
+
+```sh
+git rev-parse HEAD
+git status --short
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodebuild -version
+xcrun --sdk iphoneos --show-sdk-version
+cd modern
+xcodegen --version
+xcodegen generate --spec project.yml
+# Generation must not rewrite the tracked application metadata.
+git diff --exit-code -- ModernApp/Info.plist
+# Unsigned device-SDK Release archive only; no install, account or store effects.
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/p0ng-qualify.XXXXXX")"
+xcodebuild -project p0ng-modern.xcodeproj -scheme p0ng \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -derivedDataPath "$OUT/DerivedData" -archivePath "$OUT/p0ng.xcarchive" \
+  CODE_SIGNING_ALLOWED=NO archive
+APP="$OUT/p0ng.xcarchive/Products/Applications/p0ng.app"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' "$APP/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :UILaunchScreen' "$APP/Info.plist"
+plutil -lint "$APP/PrivacyInfo.xcprivacy"
+test -f "$APP/offthepaddle.wav" && test -f "$APP/offthewall.wav"
+shasum -a 256 "$APP/p0ng" "$APP/Info.plist" "$APP/PrivacyInfo.xcprivacy"
+```
+
+Record the exact source, Xcode/SDK, build exit status, checksums and any archive/resource validation warnings. An unsigned archive is a build/resource check, not an installable or distribution-qualified artifact. If the command fails, preserve the output and stop rather than falling back to a Simulator product or signing automatically.
+
+The owner must separately approve an existing signing team/profile and device installation (no account creation or provisioning changes assumed). In Xcode select the p0ng scheme, choose each connected device, verify the identity and run Debug for bounded diagnostics. Confirm normal launch, Local Network permission denied/allowed and recovery in Settings, full acceptance matrix below, iPad window resizing/all orientations, and audio/haptics/VoiceOver. For a later signed Release archive, inspect Organizer's privacy report and archive validation before any upload. Check the marketing icon (1024x1024, no alpha), current App Store Connect metadata, screenshots/age rating/privacy answers, and the encryption compliance decision. MCSession uses Apple platform encryption; the owner must determine exemption/documentation under Apple's [export-compliance process](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance); don't set an exemption flag by assumption.
+
+### Acceptance receipt (fill with observations, not expectations)
+
+| Field | Observation |
+| --- | --- |
+| Candidate SHA / archive checksums | Not run |
+| Xcode / iOS device SDK | Not run |
+| Existing signing identity confirmed | Not authorized |
+| Device A/B models, OS, network type (no serials or IDs) | Not run |
+| Install/launch, permission denial/recovery, discovery/consent | Not run |
+| Pairing/rejection/expiry/reconnect, two roles, full match/rematch | Not run |
+| Loss/reordering/interruption, mixed dimensions/rotation/window resize | Not run |
+| Accessibility/audio/haptics | Not run |
+| Frame/snapshot arrival p50/p95/p99; measured input-to-visible latency and method | Not run |
+| Signed archive/Organizer manifest, icon, encryption/rights/account decisions | Not run |
+
+Keep issue #2 open until the actual device and distribution gates are satisfied. No build signing, upload, new credentials, device registration, or release is authorized by this runbook.
 
 ## Build gates
 

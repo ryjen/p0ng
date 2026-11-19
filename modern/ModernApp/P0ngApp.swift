@@ -10,7 +10,7 @@ struct P0ngApp: App {
 
 private enum Retro {
     static let foreground = Color(red: 0.93, green: 0.97, blue: 0.94)
-    static let background = Color(red: 0.04, green: 0.06, blue: 0.07)
+    static let background = Color("LaunchBackground")
     static let accent = Color(red: 0.42, green: 0.92, blue: 0.75)
 }
 

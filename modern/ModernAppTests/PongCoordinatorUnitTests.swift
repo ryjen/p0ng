@@ -16,7 +16,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
         var onDisconnected: (@MainActor @Sendable (String) -> Void)?
         var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
         var onError: (@MainActor @Sendable (String) -> Void)?
-        var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
+        var onDiscoveryFailed: (@MainActor @Sendable (DiscoveryFailure) -> Void)?
         var messages: [OutgoingMessage] = []
         var decisions: [Bool] = []
         var hostCalls = 0
@@ -35,9 +35,188 @@ final class PongCoordinatorUnitTests: XCTestCase {
         func stop() { stops += 1; connected = false }
     }
 
+    final class FakeFrameClock: FrameClock {
+        var onFrame: (@MainActor (TimeInterval) -> Void)?
+        var isRunning = false
+        func setRunning(_ running: Bool) { isRunning = running }
+    }
+
+    final class ManualScheduler: DeadlineScheduling {
+        struct Entry {
+            let seconds: TimeInterval
+            let action: @MainActor @Sendable () -> Void
+        }
+        private(set) var entries: [Entry] = []
+        private(set) var cancelled: Set<Int> = []
+        func schedule(after seconds: TimeInterval,
+                      _ action: @escaping @MainActor @Sendable () -> Void) -> CancelDeadline {
+            let index = entries.count
+            entries.append(Entry(seconds: seconds, action: action))
+            return { [weak self] in _ = self?.cancelled.insert(index) }
+        }
+        // Deliberately allow firing a cancelled entry to simulate a race.
+        func fire(_ index: Int) { entries[index].action() }
+    }
+
+    final class FakeIdleTimer: IdleTimerControlling {
+        var preventingSleep = false
+        func setPreventingSleep(_ active: Bool) { preventingSleep = active }
+    }
+
+    final class FakeFeedback: GameFeedbacking {
+        func reset() {}
+        func observe(_ next: PongSnapshot) {}
+    }
+
+    private func makeModel(_ network: FakeTransport,
+                           scheduler: ManualScheduler = ManualScheduler(),
+                           idleTimer: FakeIdleTimer = FakeIdleTimer()) -> PongViewModel {
+        PongViewModel(interactor: SessionInteractor(
+            transport: network, clock: FakeFrameClock(), now: { 100 },
+            scheduler: scheduler, feedback: FakeFeedback(), idleTimer: idleTimer))
+    }
+
+    func testHostHandshakeDeadlineIsBoundedAndOldTimerCannotEndReplacement() {
+        let network = FakeTransport()
+        let scheduler = ManualScheduler()
+        let idle = FakeIdleTimer()
+        let model = makeModel(network, scheduler: scheduler, idleTimer: idle)
+        model.host()
+        XCTAssertTrue(idle.preventingSleep)
+        XCTAssertTrue(scheduler.entries.isEmpty, "Idle hosting has no timeout")
+        network.connected = true
+        network.onConnected?()
+        XCTAssertEqual(scheduler.entries.last?.seconds, NearbySessionPolicy.handshakeDeadlineSeconds)
+        scheduler.fire(0)
+        XCTAssertEqual(model.screen, .menu)
+        XCTAssertTrue(model.canRetryDiscovery)
+        XCTAssertFalse(idle.preventingSleep)
+        model.retryDiscovery()
+        XCTAssertEqual(model.screen, .hosting)
+        scheduler.fire(0)
+        XCTAssertEqual(model.screen, .hosting)
+        model.leave()
+        XCTAssertFalse(idle.preventingSleep)
+    }
+
+    func testGuestTransportAndHandshakeHaveSeparateDeadlines() {
+        let network = FakeTransport()
+        let scheduler = ManualScheduler()
+        let model = makeModel(network, scheduler: scheduler)
+        model.browse()
+        let peer = NearbyPeer(id: UUID(), displayName: "host")
+        model.join(peer)
+        XCTAssertEqual(scheduler.entries.last?.seconds, NearbySessionPolicy.guestConnectionDeadlineSeconds)
+        network.connected = true
+        network.onConnected?()
+        XCTAssertTrue(scheduler.cancelled.contains(0))
+        XCTAssertEqual(scheduler.entries.last?.seconds, NearbySessionPolicy.handshakeDeadlineSeconds)
+        scheduler.fire(0)
+        XCTAssertEqual(model.screen, .connecting)
+        scheduler.fire(1)
+        XCTAssertEqual(model.screen, .menu)
+        XCTAssertTrue(model.canRetryDiscovery)
+    }
+
+    func testForegroundHostingRetainsSessionAndReleasesIdleTimer() {
+        let network = FakeTransport()
+        let idle = FakeIdleTimer()
+        let model = makeModel(network, idleTimer: idle)
+        model.host()
+        XCTAssertTrue(idle.preventingSleep)
+        model.setInteractive(false)
+        XCTAssertFalse(idle.preventingSleep)
+        XCTAssertEqual(model.screen, .hosting)
+        model.setInteractive(true)
+        XCTAssertTrue(idle.preventingSleep)
+        network.onDiscoveryFailed?(DiscoveryFailure(operation: .preflight,
+            domain: "DNSService", code: -65570, detail: "Policy denied"))
+        XCTAssertEqual(model.screen, .menu)
+        XCTAssertFalse(idle.preventingSleep)
+        XCTAssertTrue(model.message?.contains("DNSService:-65570") == true)
+        XCTAssertTrue(model.canRetryDiscovery)
+    }
+
+    func testNativeIdleTimerRestoresOriginalValue() {
+        var disabled = false
+        let idle = NativeIdleTimer(read: { disabled }, write: { disabled = $0 })
+        idle.setPreventingSleep(true)
+        XCTAssertTrue(disabled)
+        idle.setPreventingSleep(true)
+        idle.setPreventingSleep(false)
+        XCTAssertFalse(disabled)
+        disabled = true
+        idle.setPreventingSleep(true)
+        idle.setPreventingSleep(false)
+        XCTAssertTrue(disabled)
+    }
+
+    final class FakeProbe: DiscoveryPreflighting {
+        var completions: [@MainActor (Result<Void, DiscoveryFailure>) -> Void] = []
+        private(set) var cancels = 0
+        func start(completion: @escaping @MainActor (Result<Void, DiscoveryFailure>) -> Void) {
+            completions.append(completion)
+        }
+        func cancel() { cancels += 1 }
+    }
+
+    @MainActor
+    private final class FailureRecorder {
+        var value: DiscoveryFailure?
+    }
+
+    func testDiscoveryProbeFailureIsTypedAndObsoleteResultsAreIgnored() {
+        let probe = FakeProbe()
+        let scheduler = ManualScheduler()
+        let transport = NearbyTransport(probe: probe, scheduler: scheduler)
+        let failure = FailureRecorder()
+        transport.onDiscoveryFailed = { failure.value = $0 }
+        transport.host()
+        XCTAssertEqual(probe.completions.count, 1)
+        transport.browse()
+        XCTAssertEqual(probe.completions.count, 2)
+        let problem = DiscoveryFailure(operation: .preflight, domain: "DNSService",
+                                       code: -65570, detail: "Policy denied")
+        probe.completions[0](.failure(problem))
+        XCTAssertNil(failure.value)
+        probe.completions[1](.failure(problem))
+        XCTAssertEqual(failure.value, problem)
+        failure.value = nil
+        transport.stop()
+        probe.completions[1](.failure(problem))
+        XCTAssertNil(failure.value)
+        XCTAssertGreaterThan(probe.cancels, 0)
+    }
+
+    @MainActor
+    private final class FeedbackRecorder: FeedbackOutput {
+        var events: [FeedbackEvent] = []
+        func emit(_ event: FeedbackEvent) { events.append(event) }
+    }
+
+    func testFeedbackObeysInjectedPreferencesAndReset() {
+        let output = FeedbackRecorder()
+        var settings = FeedbackPreferences(sound: true, haptics: false)
+        let feedback = GameFeedback(preferences: { settings }, output: output)
+        var snapshot = PongSnapshot()
+        snapshot.phase = .playing
+        feedback.observe(snapshot)
+        snapshot.ballVX *= -1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events, [.paddleSound])
+        settings = FeedbackPreferences(sound: false, haptics: true)
+        snapshot.leftScore += 1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events, [.paddleSound, .pointHaptic])
+        feedback.reset()
+        snapshot.leftScore += 1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events.count, 2)
+    }
+
     func testExpiredHostInvitationDismissesAlertAndAllowsNewRequest() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.host()
         network.onInvitation?("visitor-1")
         XCTAssertEqual(model.invitation, "visitor-1")
@@ -57,7 +236,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testPlayAgainRoutesUsingTypedMatchRole() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
 
         // Solo rematch must never begin network discovery.
         model.playSolo()
@@ -86,7 +265,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testHostInvitationAndDisconnectResetState() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         XCTAssertFalse(model.isDisplayClockRunning)
         model.host()
         XCTAssertEqual(network.hostCalls, 1)
@@ -121,9 +300,9 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testCancelledDiscoveryCanRetryWithoutReusingSession() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.host()
-        network.onDiscoveryFailed?("Local Network denied")
+        network.onDiscoveryFailed?(DiscoveryFailure(operation: .hosting, domain: "DNSService", code: -65570, detail: "Local Network denied"))
         XCTAssertEqual(model.screen, .menu)
         XCTAssertTrue(model.canRetryDiscovery)
         XCTAssertFalse(model.isDisplayClockRunning)
@@ -134,7 +313,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testBrowsingUsesTransportNeutralPeerIDs() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.browse()
         let peer = NearbyPeer(id: UUID(), displayName: "test-peer")
         network.onPeersChanged?([peer])
@@ -149,7 +328,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testStaleDiscoveryAndSessionCallbacksDoNotReopenMenu() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.host()
         model.leave()
 
@@ -170,7 +349,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testDelayedOldSessionCallbacksCannotCancelSoloGame() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.host()
         model.leave()
         model.playSolo()
@@ -191,7 +370,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testStaleDiscoveryTokenRejectsJoinImmediatelyAndKeepsBrowsing() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.browse()
         let stale = NearbyPeer(id: UUID(), displayName: "expired-host")
         network.onPeersChanged?([stale])
@@ -211,7 +390,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testValidJoinInitiatesConnectionWithoutPrematureFailureAlert() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.browse()
         let peer = NearbyPeer(id: UUID(), displayName: "available-host")
         network.onPeersChanged?([peer])
@@ -226,7 +405,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testGuestConnectionFailureBeforeHandshakeReturnsToRetryableMenu() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.browse()
         let peer = NearbyPeer(id: UUID(), displayName: "host")
         network.onPeersChanged?([peer])
@@ -243,7 +422,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testNonfiniteTouchInputLeavesLocalSimulationUnchanged() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.playSolo()
         let before = model.state
 
@@ -258,7 +437,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testFinishedGuestMatchRejectsTouchPredictionAndLateRelease() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.browse()
         let hostPeer = NearbyPeer(id: UUID(), displayName: "test-host")
         network.onPeersChanged?([hostPeer])
@@ -323,7 +502,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 
     func testLatePacketAfterLeaveCannotRestorePlayingScreen() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.host()
         model.leave()
         let packet = MatchMessage(kind: .started, matchID: UUID(), sequence: 0)
@@ -336,7 +515,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
 extension PongCoordinatorUnitTests {
     func testInactiveScenePausesAndResumeAvoidsSimulationBurst() {
         let network = FakeTransport()
-        let model = PongViewModel(transport: network)
+        let model = makeModel(network)
         model.playSolo()
         XCTAssertTrue(model.isDisplayClockRunning)
         model.setInteractive(false)
@@ -448,41 +627,81 @@ extension PongCoordinatorUnitTests {
     }
 
     func testDelegatePacketBudgetIsRaceFreeAndResetsPerSession() {
-        let limiter = LockedPacketIngress()
+        let limiter = LockedPacketIngress(now: { 100 })
         let accepted = CallbackRecorder()
+        let overload = CallbackRecorder()
         let references = TestNetworkReferences(
             session: MCSession(peer: MCPeerID(displayName: "local"),
                                securityIdentity: nil, encryptionPreference: .required),
             peer: MCPeerID(displayName: "authorized"),
             unexpected: MCPeerID(displayName: "untrusted"))
 
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer, at: 100))
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Must not admit before authorization") }
         limiter.authorize(session: references.session, peer: references.peer)
         DispatchQueue.concurrentPerform(iterations: 256) { index in
             let sender = index.isMultiple(of: 2) ? references.peer : references.unexpected
-            if limiter.allow(session: references.session, from: sender, at: 100) {
+            switch limiter.admit(session: references.session, from: sender) {
+            case .admitted(let lease):
                 accepted.record()
+                limiter.complete(lease)
+            case .overloaded: overload.record()
+            case .ignored: break
             }
         }
         XCTAssertEqual(accepted.count, 120)
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.unexpected, at: 101))
+        XCTAssertEqual(overload.count, 1)
         limiter.reset()
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer, at: 102))
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Reset must remove authorization") }
         limiter.authorize(session: references.session, peer: references.unexpected)
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer, at: 103))
-        XCTAssertTrue(limiter.allow(session: references.session,
-                                    from: references.unexpected, at: 103))
-
-        // A newer match may reuse its own peer label; the actual session
-        // identity is part of admission, not just the display name.
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Old peer must not be authorized") }
+        if case .admitted(let lease) = limiter.admit(session: references.session, from: references.unexpected) {
+            limiter.complete(lease)
+        } else { XCTFail("New peer must be authorized") }
         let otherSession = MCSession(peer: MCPeerID(displayName: "other-local"),
                                      securityIdentity: nil, encryptionPreference: .required)
-        XCTAssertFalse(limiter.allow(session: otherSession,
-                                     from: references.unexpected, at: 104))
+        if case .ignored = limiter.admit(session: otherSession, from: references.unexpected) {}
+        else { XCTFail("Different SDK session must not be authorized") }
         limiter.reset()
+    }
+
+    private final class AdvancingClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var time: TimeInterval = 0
+        func now() -> TimeInterval {
+            lock.lock()
+            defer { lock.unlock() }
+            time += 2
+            return time
+        }
+    }
+
+    func testPendingAdmissionIsBoundedAndResetInvalidatesOldCompletions() {
+        let clock = AdvancingClock()
+        let limiter = LockedPacketIngress(now: { clock.now() })
+        let session = MCSession(peer: MCPeerID(displayName: "local"),
+                                securityIdentity: nil, encryptionPreference: .required)
+        let peer = MCPeerID(displayName: "peer")
+        limiter.authorize(session: session, peer: peer)
+        var oldLease: UUID?
+        for _ in 0..<PacketIngressWindow.defaultMaximumPacketsPerSecond {
+            if case .admitted(let lease) = limiter.admit(session: session, from: peer) {
+                oldLease = lease
+            } else { XCTFail("Pending budget should allow its capacity") }
+        }
+        if case .overloaded = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Pending budget must be bounded independently of elapsed time") }
+        if case .ignored = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Only one overload notification may be queued") }
+        limiter.authorize(session: session, peer: peer)
+        for _ in 0..<PacketIngressWindow.defaultMaximumPacketsPerSecond {
+            if case .admitted = limiter.admit(session: session, from: peer) {}
+            else { XCTFail("New session gets new capacity") }
+        }
+        if let oldLease { limiter.complete(oldLease) }
+        if case .overloaded = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Old completion cannot release new capacity") }
     }
 }

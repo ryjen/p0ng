@@ -1,24 +1,26 @@
-import AVFoundation
-import UIKit
 import PongCore
 
-/// Native feedback is derived from authoritative simulation events, never
-/// interpolated guest rendering. Nothing is emitted for a mere visual correction.
-@MainActor
-final class GameFeedback {
-    private var previous: PongSnapshot?
-    private let paddle: AVAudioPlayer?
-    private let wall: AVAudioPlayer?
+enum FeedbackEvent: Equatable {
+    case paddleSound, wallSound, pointHaptic, paddleHaptic
+}
 
-    init() {
-        func load(_ name: String) -> AVAudioPlayer? {
-            guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
-                  let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
-            player.prepareToPlay()
-            return player
-        }
-        paddle = load("offthepaddle")
-        wall = load("offthewall")
+@MainActor
+protocol FeedbackOutput {
+    func emit(_ event: FeedbackEvent)
+}
+
+/// Feedback policy uses authoritative simulation events, never interpolated
+/// rendering. Native resources and settings are injected at composition.
+@MainActor
+final class GameFeedback: GameFeedbacking {
+    private var previous: PongSnapshot?
+    private let preferences: @MainActor () -> FeedbackPreferences
+    private let output: FeedbackOutput
+
+    init(preferences: @escaping @MainActor () -> FeedbackPreferences,
+         output: FeedbackOutput) {
+        self.preferences = preferences
+        self.output = output
     }
 
     func reset() { previous = nil }
@@ -26,25 +28,17 @@ final class GameFeedback {
     func observe(_ next: PongSnapshot) {
         defer { previous = next }
         guard let old = previous else { return }
-        let sound = UserDefaults.standard.object(forKey: "p0ng.soundEnabled") as? Bool ?? true
-        let haptics = UserDefaults.standard.object(forKey: "p0ng.hapticsEnabled") as? Bool ?? true
-
+        let settings = preferences()
         if next.leftScore != old.leftScore || next.rightScore != old.rightScore {
-            if sound { play(wall) }
-            if haptics { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+            if settings.sound { output.emit(.wallSound) }
+            if settings.haptics { output.emit(.pointHaptic) }
         } else if old.phase == .playing && next.phase == .playing {
             if old.ballVX * next.ballVX < 0 {
-                if sound { play(paddle) }
-                if haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+                if settings.sound { output.emit(.paddleSound) }
+                if settings.haptics { output.emit(.paddleHaptic) }
             } else if old.ballVY * next.ballVY < 0 {
-                if sound { play(wall) }
+                if settings.sound { output.emit(.wallSound) }
             }
         }
-    }
-
-    private func play(_ player: AVAudioPlayer?) {
-        guard let player else { return }
-        player.currentTime = 0
-        player.play()
     }
 }

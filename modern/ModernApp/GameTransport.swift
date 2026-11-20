@@ -28,7 +28,7 @@ protocol GameTransport: AnyObject {
     var onDisconnected: (@MainActor @Sendable (String) -> Void)? { get set }
     var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)? { get set }
     var onError: (@MainActor @Sendable (String) -> Void)? { get set }
-    var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)? { get set }
+    var onDiscoveryFailed: (@MainActor @Sendable (DiscoveryFailure) -> Void)? { get set }
     func host()
     func browse()
     func join(_ peer: NearbyPeer) -> NearbyJoinResult

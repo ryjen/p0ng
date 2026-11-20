@@ -15,7 +15,7 @@ private enum Retro {
 }
 
 struct PongHomeView: View {
-    @StateObject private var model = PongViewModel()
+    @StateObject private var model = P0ngComposition.makeModel()
     @AppStorage("p0ng.soundEnabled") private var soundEnabled = true
     @AppStorage("p0ng.hapticsEnabled") private var hapticsEnabled = true
     @Environment(\.scenePhase) private var scenePhase
@@ -122,6 +122,7 @@ struct PongHomeView: View {
             @unknown default: model.setInteractive(false)
             }
         }
+        .onDisappear { model.leave() }
         .foregroundStyle(Retro.foreground)
         // One SwiftUI alert destination: invitation approval takes precedence
         // over a concurrent network error, instead of competing modifiers.

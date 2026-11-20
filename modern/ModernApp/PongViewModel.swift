@@ -17,7 +17,7 @@ final class PongViewModel: ObservableObject {
         let isReady: Bool
         let roleLabel: String
 
-        init(_ session: SessionInteractor) {
+        @MainActor init(_ session: SessionInteractor) {
             screen = session.screen
             state = session.state
             peers = session.peers

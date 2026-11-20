@@ -104,7 +104,7 @@ final class SessionInteractor {
         transport.onDiscoveryFailed = { [weak self] problem in
             guard let self else { return }
             let mode: Screen
-            switch self.screen {
+            switch self.phase {
             case .hosting: mode = .hosting
             case .browsing, .connecting: mode = .browsing
             default: return
@@ -279,6 +279,7 @@ final class SessionInteractor {
     /// Called directly on the main actor, once per native display refresh.
     /// No per-frame unbounded Task scheduling.
     func frame(at now: TimeInterval) {
+        guard interactive, clock.isRunning else { return }
         let elapsed = lastFrameTime.map { now - $0 } ?? 0
         lastFrameTime = now
         if !match.ready, transport.connected,
@@ -321,7 +322,10 @@ final class SessionInteractor {
                 if let packet = match.tick() { outgoing.append(packet) }
                 feedback.observe(match.displayed)
             }
-            for packet in outgoing.drain() { transport.send(packet) }
+            for packet in outgoing.drain() {
+                guard phase == .playing else { break }
+                transport.send(packet)
+            }
             publish(match.displayed)
         }
     }
@@ -416,7 +420,7 @@ final class SessionInteractor {
     }
 
     func movePaddle(y: Double, finished: Bool = false) {
-        guard screen == .playing, match.ready,
+        guard interactive, phase == .playing, match.ready,
               match.displayed.phase != .finished, y.isFinite else { return }
         let position = min(1 - PongGame.paddleHeight / 2,
                            max(PongGame.paddleHeight / 2, y))

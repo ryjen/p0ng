@@ -52,7 +52,7 @@ final class PongCoordinatorUnitTests: XCTestCase {
                       _ action: @escaping @MainActor @Sendable () -> Void) -> CancelDeadline {
             let index = entries.count
             entries.append(Entry(seconds: seconds, action: action))
-            return { [weak self] in self?.cancelled.insert(index) }
+            return { [weak self] in _ = self?.cancelled.insert(index) }
         }
         // Deliberately allow firing a cancelled entry to simulate a race.
         func fire(_ index: Int) { entries[index].action() }
@@ -135,6 +135,52 @@ final class PongCoordinatorUnitTests: XCTestCase {
         XCTAssertFalse(idle.preventingSleep)
         XCTAssertTrue(model.message?.contains("DNSService:-65570") == true)
         XCTAssertTrue(model.canRetryDiscovery)
+    }
+
+    func testNativeIdleTimerRestoresOriginalValue() {
+        var disabled = false
+        let idle = NativeIdleTimer(read: { disabled }, write: { disabled = $0 })
+        idle.setPreventingSleep(true)
+        XCTAssertTrue(disabled)
+        idle.setPreventingSleep(true)
+        idle.setPreventingSleep(false)
+        XCTAssertFalse(disabled)
+        disabled = true
+        idle.setPreventingSleep(true)
+        idle.setPreventingSleep(false)
+        XCTAssertTrue(disabled)
+    }
+
+    final class FakeProbe: DiscoveryPreflighting {
+        var completions: [@MainActor (Result<Void, DiscoveryFailure>) -> Void] = []
+        private(set) var cancels = 0
+        func start(completion: @escaping @MainActor (Result<Void, DiscoveryFailure>) -> Void) {
+            completions.append(completion)
+        }
+        func cancel() { cancels += 1 }
+    }
+
+    func testDiscoveryProbeFailureIsTypedAndObsoleteResultsAreIgnored() {
+        let probe = FakeProbe()
+        let scheduler = ManualScheduler()
+        let transport = NearbyTransport(probe: probe, scheduler: scheduler)
+        var failure: DiscoveryFailure?
+        transport.onDiscoveryFailed = { failure = $0 }
+        transport.host()
+        XCTAssertEqual(probe.completions.count, 1)
+        transport.browse()
+        XCTAssertEqual(probe.completions.count, 2)
+        let problem = DiscoveryFailure(operation: .preflight, domain: "DNSService",
+                                       code: -65570, detail: "Policy denied")
+        probe.completions[0](.failure(problem))
+        XCTAssertNil(failure)
+        probe.completions[1](.failure(problem))
+        XCTAssertEqual(failure, problem)
+        failure = nil
+        transport.stop()
+        probe.completions[1](.failure(problem))
+        XCTAssertNil(failure)
+        XCTAssertGreaterThan(probe.cancels, 0)
     }
 
     func testExpiredHostInvitationDismissesAlertAndAllowsNewRequest() {
@@ -552,39 +598,79 @@ extension PongCoordinatorUnitTests {
     func testDelegatePacketBudgetIsRaceFreeAndResetsPerSession() {
         let limiter = LockedPacketIngress(now: { 100 })
         let accepted = CallbackRecorder()
+        let overload = CallbackRecorder()
         let references = TestNetworkReferences(
             session: MCSession(peer: MCPeerID(displayName: "local"),
                                securityIdentity: nil, encryptionPreference: .required),
             peer: MCPeerID(displayName: "authorized"),
             unexpected: MCPeerID(displayName: "untrusted"))
 
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer))
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Must not admit before authorization") }
         limiter.authorize(session: references.session, peer: references.peer)
         DispatchQueue.concurrentPerform(iterations: 256) { index in
             let sender = index.isMultiple(of: 2) ? references.peer : references.unexpected
-            if limiter.allow(session: references.session, from: sender) {
+            switch limiter.admit(session: references.session, from: sender) {
+            case .admitted(let lease):
                 accepted.record()
+                limiter.complete(lease)
+            case .overloaded: overload.record()
+            case .ignored: break
             }
         }
         XCTAssertEqual(accepted.count, 120)
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.unexpected))
+        XCTAssertEqual(overload.count, 1)
         limiter.reset()
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer))
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Reset must remove authorization") }
         limiter.authorize(session: references.session, peer: references.unexpected)
-        XCTAssertFalse(limiter.allow(session: references.session,
-                                     from: references.peer))
-        XCTAssertTrue(limiter.allow(session: references.session,
-                                    from: references.unexpected))
-
-        // A newer match may reuse its own peer label; the actual session
-        // identity is part of admission, not just the display name.
+        if case .ignored = limiter.admit(session: references.session, from: references.peer) {}
+        else { XCTFail("Old peer must not be authorized") }
+        if case .admitted(let lease) = limiter.admit(session: references.session, from: references.unexpected) {
+            limiter.complete(lease)
+        } else { XCTFail("New peer must be authorized") }
         let otherSession = MCSession(peer: MCPeerID(displayName: "other-local"),
                                      securityIdentity: nil, encryptionPreference: .required)
-        XCTAssertFalse(limiter.allow(session: otherSession,
-                                     from: references.unexpected))
+        if case .ignored = limiter.admit(session: otherSession, from: references.unexpected) {}
+        else { XCTFail("Different SDK session must not be authorized") }
         limiter.reset()
+    }
+
+    private final class AdvancingClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var time: TimeInterval = 0
+        func now() -> TimeInterval {
+            lock.lock()
+            defer { lock.unlock() }
+            time += 2
+            return time
+        }
+    }
+
+    func testPendingAdmissionIsBoundedAndResetInvalidatesOldCompletions() {
+        let clock = AdvancingClock()
+        let limiter = LockedPacketIngress(now: { clock.now() })
+        let session = MCSession(peer: MCPeerID(displayName: "local"),
+                                securityIdentity: nil, encryptionPreference: .required)
+        let peer = MCPeerID(displayName: "peer")
+        limiter.authorize(session: session, peer: peer)
+        var oldLease: UUID?
+        for _ in 0..<PacketIngressWindow.defaultMaximumPacketsPerSecond {
+            if case .admitted(let lease) = limiter.admit(session: session, from: peer) {
+                oldLease = lease
+            } else { XCTFail("Pending budget should allow its capacity") }
+        }
+        if case .overloaded = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Pending budget must be bounded independently of elapsed time") }
+        if case .ignored = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Only one overload notification may be queued") }
+        limiter.authorize(session: session, peer: peer)
+        for _ in 0..<PacketIngressWindow.defaultMaximumPacketsPerSecond {
+            if case .admitted = limiter.admit(session: session, from: peer) {}
+            else { XCTFail("New session gets new capacity") }
+        }
+        if let oldLease { limiter.complete(oldLease) }
+        if case .overloaded = limiter.admit(session: session, from: peer) {}
+        else { XCTFail("Old completion cannot release new capacity") }
     }
 }

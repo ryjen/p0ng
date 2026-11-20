@@ -67,13 +67,21 @@ final class NativeDeadlineScheduler: DeadlineScheduling {
 @MainActor
 final class NativeIdleTimer: IdleTimerControlling {
     private var previous: Bool?
+    private let read: @MainActor () -> Bool
+    private let write: @MainActor (Bool) -> Void
+
+    init(read: @escaping @MainActor () -> Bool, write: @escaping @MainActor (Bool) -> Void) {
+        self.read = read
+        self.write = write
+    }
+
     func setPreventingSleep(_ active: Bool) {
         if active {
             guard previous == nil else { return }
-            previous = UIApplication.shared.isIdleTimerDisabled
-            UIApplication.shared.isIdleTimerDisabled = true
+            previous = read()
+            write(true)
         } else if let previous {
-            UIApplication.shared.isIdleTimerDisabled = previous
+            write(previous)
             self.previous = nil
         }
     }
@@ -83,7 +91,8 @@ final class NativeIdleTimer: IdleTimerControlling {
 enum P0ngComposition {
     static func makeModel() -> PongViewModel {
         let scheduler = NativeDeadlineScheduler()
-        let transport = NearbyTransport(probe: BonjourDiscoveryProbe(scheduler: scheduler))
+        let transport = NearbyTransport(probe: BonjourDiscoveryProbe(scheduler: scheduler),
+                                        scheduler: scheduler)
         let feedback = GameFeedback(preferences: {
             let defaults = UserDefaults.standard
             return FeedbackPreferences(
@@ -93,6 +102,8 @@ enum P0ngComposition {
         return PongViewModel(interactor: SessionInteractor(
             transport: transport, clock: NativeFrameClock(),
             now: { CACurrentMediaTime() }, scheduler: scheduler,
-            feedback: feedback, idleTimer: NativeIdleTimer()))
+            feedback: feedback, idleTimer: NativeIdleTimer(
+                read: { UIApplication.shared.isIdleTimerDisabled },
+                write: { UIApplication.shared.isIdleTimerDisabled = $0 })))
     }
 }

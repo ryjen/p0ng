@@ -32,41 +32,69 @@ final class InvitationReply: @unchecked Sendable {
 
 /// The only mutable transport state accessed by delegate threads.
 final class LockedPacketIngress: @unchecked Sendable {
-    private let lock = NSLock()
-    private var window = PacketIngressWindow()
-    // Both SDK references are inspected only while holding the lock. Retaining
-    // the actual session prevents stale pointer/identity reuse across matches.
-    private var session: MCSession?
-    private var peer: MCPeerID?
-
-    func authorize(session: MCSession, peer: MCPeerID) {
-        lock.lock()
-        defer { lock.unlock() }
-        window.reset()
-        self.session = session
-        self.peer = peer
+    enum Admission {
+        case admitted(UUID)
+        case ignored
+        case overloaded
     }
 
+    private let lock = NSLock()
+    private var window = PacketIngressWindow()
     private let now: @Sendable () -> TimeInterval
+    private var session: MCSession?
+    private var peer: MCPeerID?
+    private var generation = UUID()
+    private var pending = 0
+    private var overloadReported = false
 
     init(now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.now = now
     }
 
-    func allow(session candidate: MCSession, from sender: MCPeerID) -> Bool {
+    func authorize(session: MCSession, peer: MCPeerID) {
+        lock.lock()
+        defer { lock.unlock() }
+        clearLocked()
+        self.session = session
+        self.peer = peer
+    }
+
+    func admit(session candidate: MCSession, from sender: MCPeerID) -> Admission {
         lock.lock()
         defer { lock.unlock() }
         guard let session, session === candidate,
-              let peer, peer == sender else { return false }
-        return window.admit(at: now())
+              let peer, peer == sender, !overloadReported else { return .ignored }
+        // Sample the monotonic clock while serialized, and bound work that
+        // is still queued for the application actor as well as the rate.
+        guard pending < PacketIngressWindow.defaultMaximumPacketsPerSecond,
+              window.admit(at: now()) else {
+            overloadReported = true
+            return .overloaded
+        }
+        pending += 1
+        return .admitted(generation)
+    }
+
+    func complete(_ lease: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == lease, pending > 0 else { return }
+        pending -= 1
+    }
+
+    private func clearLocked() {
+        session = nil
+        peer = nil
+        window.reset()
+        generation = UUID()
+        pending = 0
+        overloadReported = false
     }
 
     func reset() {
         lock.lock()
         defer { lock.unlock() }
-        session = nil
-        peer = nil
-        window.reset()
+        clearLocked()
     }
 }
 
@@ -79,6 +107,9 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     // Avoid advertising the owner's device name (often personally identifying).
     private let localPeer = MCPeerID(displayName: "p0ng-" + String(UUID().uuidString.prefix(6)))
     private let probe: DiscoveryPreflighting
+    private let scheduler: DeadlineScheduling
+    private var pendingDeadline: CancelDeadline?
+    private var acceptedDeadline: CancelDeadline?
     private var discoveryID: UUID?
     private var session: MCSession?
     private var advertiser: MCNearbyServiceAdvertiser?
@@ -93,14 +124,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private var selectedPeer: MCPeerID?
     private var activePeer: MCPeerID?
     private var admission = NearbyAdmissionGate()
-    private let ingress = LockedPacketIngress()
-
-    nonisolated private func canDecodePacket(from peer: MCPeerID,
-                                              in session: MCSession) -> Bool {
-        // Check the admitted peer BEFORE JSON decoding or consuming rate quota.
-        // Unexpected peers cannot starve the authorized player's packet budget.
-        ingress.allow(session: session, from: peer)
-    }
+    private let ingress: LockedPacketIngress
 
     var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
     var onInvitation: (@MainActor @Sendable (String) -> Void)?
@@ -120,8 +144,11 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         }
     }
 
-    init(probe: DiscoveryPreflighting) {
+    init(probe: DiscoveryPreflighting, scheduler: DeadlineScheduling,
+         ingress: LockedPacketIngress = LockedPacketIngress()) {
         self.probe = probe
+        self.scheduler = scheduler
+        self.ingress = ingress
         super.init()
     }
 
@@ -135,6 +162,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         discoveryID = token
         probe.start { [weak self] result in
             guard let self, self.discoveryID == token else { return }
+            self.discoveryID = nil
             switch result {
             case .failure(let problem): self.onDiscoveryFailed?(problem)
             case .success:
@@ -168,6 +196,8 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     func decideInvitation(accept: Bool) {
         guard let pendingInvitation else { return }
         self.pendingInvitation = nil
+        pendingDeadline?()
+        pendingDeadline = nil
         let allow = accept && hosting && session != nil
         guard admission.resolve(accept: allow) else {
             pendingInvitation.reply.respond(false, session: nil)
@@ -179,7 +209,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             acceptedAttemptID = attempt
             // An unanswered request expires at 18s. Once accepted, allow a
             // separate 25s connection window before rotating the old session.
-            DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.acceptedConnectionDeadlineSeconds) { [weak self] in
+            acceptedDeadline = scheduler.schedule(after: NearbySessionPolicy.acceptedConnectionDeadlineSeconds) { [weak self] in
                 guard let self, self.acceptedAttemptID == attempt,
                       self.hosting, !self.connected,
                       self.admission.expireUnconnectedAcceptance() else { return }
@@ -242,6 +272,10 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     func stop() {
         discoveryID = nil
         probe.cancel()
+        pendingDeadline?()
+        pendingDeadline = nil
+        acceptedDeadline?()
+        acceptedDeadline = nil
         advertiser?.stopAdvertisingPeer()
         advertiser?.delegate = nil
         advertiser = nil
@@ -296,11 +330,12 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             // The browsing peer's invitation expires after 20 seconds. Do
             // not keep this host's single admission slot occupied indefinitely
             // if nobody responds or the UI remains in the background.
-            DispatchQueue.main.asyncAfter(deadline: .now() + NearbySessionPolicy.unansweredInvitationDeadlineSeconds) { [weak self] in
+            self.pendingDeadline = self.scheduler.schedule(after: NearbySessionPolicy.unansweredInvitationDeadlineSeconds) { [weak self] in
                 guard let self, let pending = self.pendingInvitation,
                       pending.id == id, self.hosting,
                       self.admission.expire() else { return }
                 self.pendingInvitation = nil
+                self.pendingDeadline = nil
                 pending.reply.respond(false, session: nil)
                 self.onInvitationExpired?()
             }
@@ -313,7 +348,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         let reason = DiscoveryFailure(operation: .hosting, error: error as NSError)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.advertiser,
-                  current === sdk.value else { return }
+                  current === sdk.value, !self.connected else { return }
             self.onDiscoveryFailed?(reason)
         }
     }
@@ -351,7 +386,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         let reason = DiscoveryFailure(operation: .browsing, error: error as NSError)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.browser,
-                  current === sdk.value else { return }
+                  current === sdk.value, !self.connected else { return }
             self.onDiscoveryFailed?(reason)
         }
     }
@@ -378,6 +413,8 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 guard !self.connected else { return }
                 self.connected = true
                 self.acceptedAttemptID = nil
+                self.acceptedDeadline?()
+                self.acceptedDeadline = nil
                 self.activePeer = peer.value
                 self.ingress.authorize(session: current, peer: peer.value)
                 self.browser?.stopBrowsingForPeers()
@@ -407,18 +444,35 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
 
     nonisolated func session(_ session: MCSession, didReceive data: Data,
                              fromPeer peerID: MCPeerID) {
-        // Decode off the UI actor. Only a bounded, Sendable MatchMessage crosses.
-        guard data.count <= OutboundSendPolicy.maximumBytes, canDecodePacket(from: peerID, in: session),
-              let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else { return }
+        guard data.count <= OutboundSendPolicy.maximumBytes else { return }
         let sdk = SDKReference(value: session)
         let peer = PeerReference(value: peerID)
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let current = self.session,
-                  current === sdk.value,
-                  self.connected, self.activePeer == peer.value,
-                  current.connectedPeers.count == 1,
-                  current.connectedPeers.contains(peer.value) else { return }
-            self.onPacket?(message)
+        switch ingress.admit(session: session, from: peerID) {
+        case .ignored:
+            return
+        case .overloaded:
+            // Do not silently strand reliable application control state on
+            // overload. Only one failure callback is queued for this session.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let current = self.session, current === sdk.value,
+                      self.activePeer == peer.value else { return }
+                self.stop()
+                self.onDisconnected?("Match ended: network traffic exceeded the processing budget.")
+            }
+        case .admitted(let lease):
+            guard let message = try? JSONDecoder().decode(MatchMessage.self, from: data) else {
+                ingress.complete(lease)
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                defer { self.ingress.complete(lease) }
+                guard let current = self.session, current === sdk.value,
+                      self.connected, self.activePeer == peer.value,
+                      current.connectedPeers.count == 1,
+                      current.connectedPeers.contains(peer.value) else { return }
+                self.onPacket?(message)
+            }
         }
     }
 

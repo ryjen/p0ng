@@ -325,7 +325,6 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
             }
             let id = UUID()
             self.pendingInvitation = (id: id, peer: peer.value, reply: reply)
-            self.onInvitation?(peer.value.displayName)
 
             // The browsing peer's invitation expires after 20 seconds. Do
             // not keep this host's single admission slot occupied indefinitely
@@ -339,6 +338,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                 pending.reply.respond(false, session: nil)
                 self.onInvitationExpired?()
             }
+            self.onInvitation?(peer.value.displayName)
         }
     }
 

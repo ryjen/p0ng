@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import QuartzCore
 import UIKit
 import PongCore
@@ -88,6 +89,38 @@ final class NativeIdleTimer: IdleTimerControlling {
 }
 
 @MainActor
+final class NativeFeedbackOutput: FeedbackOutput {
+    private let paddle: AVAudioPlayer?
+    private let wall: AVAudioPlayer?
+
+    init(bundle: Bundle) {
+        func load(_ name: String) -> AVAudioPlayer? {
+            guard let url = bundle.url(forResource: name, withExtension: "wav"),
+                  let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+            player.prepareToPlay()
+            return player
+        }
+        paddle = load("offthepaddle")
+        wall = load("offthewall")
+    }
+
+    func emit(_ event: FeedbackEvent) {
+        switch event {
+        case .paddleSound: play(paddle)
+        case .wallSound: play(wall)
+        case .pointHaptic: UINotificationFeedbackGenerator().notificationOccurred(.success)
+        case .paddleHaptic: UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+
+    private func play(_ player: AVAudioPlayer?) {
+        guard let player else { return }
+        player.currentTime = 0
+        player.play()
+    }
+}
+
+@MainActor
 enum P0ngComposition {
     static func makeModel() -> PongViewModel {
         let scheduler = NativeDeadlineScheduler()
@@ -98,7 +131,7 @@ enum P0ngComposition {
             return FeedbackPreferences(
                 sound: defaults.object(forKey: "p0ng.soundEnabled") as? Bool ?? true,
                 haptics: defaults.object(forKey: "p0ng.hapticsEnabled") as? Bool ?? true)
-        })
+        }, output: NativeFeedbackOutput(bundle: .main))
         return PongViewModel(interactor: SessionInteractor(
             transport: transport, clock: NativeFrameClock(),
             now: { CACurrentMediaTime() }, scheduler: scheduler,

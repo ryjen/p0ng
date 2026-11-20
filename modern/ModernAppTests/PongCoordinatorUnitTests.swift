@@ -160,12 +160,17 @@ final class PongCoordinatorUnitTests: XCTestCase {
         func cancel() { cancels += 1 }
     }
 
+    @MainActor
+    private final class FailureRecorder {
+        var value: DiscoveryFailure?
+    }
+
     func testDiscoveryProbeFailureIsTypedAndObsoleteResultsAreIgnored() {
         let probe = FakeProbe()
         let scheduler = ManualScheduler()
         let transport = NearbyTransport(probe: probe, scheduler: scheduler)
-        var failure: DiscoveryFailure?
-        transport.onDiscoveryFailed = { failure = $0 }
+        let failure = FailureRecorder()
+        transport.onDiscoveryFailed = { failure.value = $0 }
         transport.host()
         XCTAssertEqual(probe.completions.count, 1)
         transport.browse()
@@ -173,14 +178,40 @@ final class PongCoordinatorUnitTests: XCTestCase {
         let problem = DiscoveryFailure(operation: .preflight, domain: "DNSService",
                                        code: -65570, detail: "Policy denied")
         probe.completions[0](.failure(problem))
-        XCTAssertNil(failure)
+        XCTAssertNil(failure.value)
         probe.completions[1](.failure(problem))
-        XCTAssertEqual(failure, problem)
-        failure = nil
+        XCTAssertEqual(failure.value, problem)
+        failure.value = nil
         transport.stop()
         probe.completions[1](.failure(problem))
-        XCTAssertNil(failure)
+        XCTAssertNil(failure.value)
         XCTAssertGreaterThan(probe.cancels, 0)
+    }
+
+    @MainActor
+    private final class FeedbackRecorder: FeedbackOutput {
+        var events: [FeedbackEvent] = []
+        func emit(_ event: FeedbackEvent) { events.append(event) }
+    }
+
+    func testFeedbackObeysInjectedPreferencesAndReset() {
+        let output = FeedbackRecorder()
+        var settings = FeedbackPreferences(sound: true, haptics: false)
+        let feedback = GameFeedback(preferences: { settings }, output: output)
+        var snapshot = PongSnapshot()
+        snapshot.phase = .playing
+        feedback.observe(snapshot)
+        snapshot.ballVX *= -1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events, [.paddleSound])
+        settings = FeedbackPreferences(sound: false, haptics: true)
+        snapshot.leftScore += 1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events, [.paddleSound, .pointHaptic])
+        feedback.reset()
+        snapshot.leftScore += 1
+        feedback.observe(snapshot)
+        XCTAssertEqual(output.events.count, 2)
     }
 
     func testExpiredHostInvitationDismissesAlertAndAllowsNewRequest() {

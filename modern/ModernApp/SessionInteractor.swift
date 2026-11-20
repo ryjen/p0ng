@@ -344,8 +344,6 @@ final class SessionInteractor {
     func playSolo() {
         endSession()
         match.startSolo()
-        resetMotion()
-        feedback.reset()
         publish(match.displayed)
         phase = .playing
         message = nil
@@ -354,8 +352,6 @@ final class SessionInteractor {
     func host() {
         endSession()
         match.startHosting()
-        resetMotion()
-        feedback.reset()
         publish(match.displayed)
         phase = .hosting
         message = nil
@@ -365,8 +361,6 @@ final class SessionInteractor {
     func browse() {
         endSession()
         match.startJoining()
-        resetMotion()
-        feedback.reset()
         publish(match.displayed)
         phase = .browsing
         message = nil
@@ -393,7 +387,9 @@ final class SessionInteractor {
         armDeadline(seconds: NearbySessionPolicy.guestConnectionDeadlineSeconds) { session in
             guard session.phase == .connecting else { return }
             session.browse()
-            session.message = "Connection timed out. Select a nearby host to retry."
+            if session.phase == .browsing {
+                session.message = "Connection timed out. Select a nearby host to retry."
+            }
         }
     }
 

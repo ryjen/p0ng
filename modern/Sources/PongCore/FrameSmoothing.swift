@@ -246,6 +246,12 @@ public struct PacketIngressWindow {
 
 /// Bounded local frame-gap distribution. No peer identity, input data,
 /// network payload, or unbounded per-frame history is retained.
+public struct FrameTimingSummary: Equatable, Sendable {
+    public let p50Milliseconds: Double
+    public let p95Milliseconds: Double
+    public let p99Milliseconds: Double
+}
+
 public struct FrameTimingWindow {
     private var gaps: [Double] = []
     public let capacity: Int
@@ -262,15 +268,16 @@ public struct FrameTimingWindow {
         gaps.append(seconds)
     }
 
-    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double,
-                              p99Milliseconds: Double)? {
+    public func summary() -> FrameTimingSummary? {
         guard !gaps.isEmpty else { return nil }
         let sorted = gaps.sorted()
         func quantile(_ fraction: Double) -> Double {
             let index = max(0, Int(ceil(fraction * Double(sorted.count))) - 1)
             return sorted[index] * 1000
         }
-        return (quantile(0.5), quantile(0.95), quantile(0.99))
+        return FrameTimingSummary(p50Milliseconds: quantile(0.5),
+                                  p95Milliseconds: quantile(0.95),
+                                  p99Milliseconds: quantile(0.99))
     }
 }
 
@@ -345,14 +352,11 @@ public struct SnapshotArrivalWindow {
         lastSequence = nil
     }
 
-    public func summary() -> (p50Milliseconds: Double, p95Milliseconds: Double,
-                               p99Milliseconds: Double)? {
+    public func summary() -> FrameTimingSummary? {
         intervals.summary()
     }
 
-    public func variationSummary() -> (p50Milliseconds: Double,
-                                        p95Milliseconds: Double,
-                                        p99Milliseconds: Double)? {
+    public func variationSummary() -> FrameTimingSummary? {
         variations.summary()
     }
 }

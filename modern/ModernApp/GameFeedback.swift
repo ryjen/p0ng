@@ -5,12 +5,15 @@ import PongCore
 /// Native feedback is derived from authoritative simulation events, never
 /// interpolated guest rendering. Nothing is emitted for a mere visual correction.
 @MainActor
-final class GameFeedback {
+final class GameFeedback: GameFeedbacking {
     private var previous: PongSnapshot?
     private let paddle: AVAudioPlayer?
     private let wall: AVAudioPlayer?
 
-    init() {
+    private let preferences: @MainActor () -> FeedbackPreferences
+
+    init(preferences: @escaping @MainActor () -> FeedbackPreferences) {
+        self.preferences = preferences
         func load(_ name: String) -> AVAudioPlayer? {
             guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
                   let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
@@ -26,8 +29,9 @@ final class GameFeedback {
     func observe(_ next: PongSnapshot) {
         defer { previous = next }
         guard let old = previous else { return }
-        let sound = UserDefaults.standard.object(forKey: "p0ng.soundEnabled") as? Bool ?? true
-        let haptics = UserDefaults.standard.object(forKey: "p0ng.hapticsEnabled") as? Bool ?? true
+        let settings = preferences()
+        let sound = settings.sound
+        let haptics = settings.haptics
 
         if next.leftScore != old.leftScore || next.rightScore != old.rightScore {
             if sound { play(wall) }

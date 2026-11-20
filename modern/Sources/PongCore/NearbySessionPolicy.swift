@@ -8,4 +8,5 @@ public enum NearbySessionPolicy {
     public static let invitationTimeoutSeconds: TimeInterval = 20
     public static let guestConnectionDeadlineSeconds: TimeInterval = 23
     public static let acceptedConnectionDeadlineSeconds: TimeInterval = 25
+    public static let handshakeDeadlineSeconds: TimeInterval = 12
 }

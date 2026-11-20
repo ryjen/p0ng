@@ -1,6 +1,5 @@
 import Foundation
 import MultipeerConnectivity
-import UIKit
 import PongCore
 
 /// Strongly retains a legacy SDK instance across a main-actor handoff,
@@ -48,13 +47,18 @@ final class LockedPacketIngress: @unchecked Sendable {
         self.peer = peer
     }
 
-    func allow(session candidate: MCSession, from sender: MCPeerID,
-               at time: TimeInterval) -> Bool {
+    private let now: @Sendable () -> TimeInterval
+
+    init(now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.now = now
+    }
+
+    func allow(session candidate: MCSession, from sender: MCPeerID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         guard let session, session === candidate,
               let peer, peer == sender else { return false }
-        return window.admit(at: time)
+        return window.admit(at: now())
     }
 
     func reset() {
@@ -74,6 +78,8 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     private static let service = "p0ng-lan"
     // Avoid advertising the owner's device name (often personally identifying).
     private let localPeer = MCPeerID(displayName: "p0ng-" + String(UUID().uuidString.prefix(6)))
+    private let probe: DiscoveryPreflighting
+    private var discoveryID: UUID?
     private var session: MCSession?
     private var advertiser: MCNearbyServiceAdvertiser?
     private var browser: MCNearbyServiceBrowser?
@@ -93,8 +99,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
                                               in session: MCSession) -> Bool {
         // Check the admitted peer BEFORE JSON decoding or consuming rate quota.
         // Unexpected peers cannot starve the authorized player's packet budget.
-        ingress.allow(session: session, from: peer,
-                      at: ProcessInfo.processInfo.systemUptime)
+        ingress.allow(session: session, from: peer)
     }
 
     var onPeersChanged: (@MainActor @Sendable ([NearbyPeer]) -> Void)?
@@ -104,7 +109,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     var onDisconnected: (@MainActor @Sendable (String) -> Void)?
     var onPacket: (@MainActor @Sendable (MatchMessage) -> Void)?
     var onError: (@MainActor @Sendable (String) -> Void)?
-    var onDiscoveryFailed: (@MainActor @Sendable (String) -> Void)?
+    var onDiscoveryFailed: (@MainActor @Sendable (DiscoveryFailure) -> Void)?
     private var discovered: [MCPeerID] = []
     private var peerTokens: [MCPeerID: UUID] = [:]
 
@@ -115,25 +120,40 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
         }
     }
 
-    func host() {
-        stop()
-        hosting = true
-        prepareSession()
-        let advertiser = MCNearbyServiceAdvertiser(peer: localPeer,
-            discoveryInfo: nil, serviceType: Self.service)
-        self.advertiser = advertiser
-        advertiser.delegate = self
-        advertiser.startAdvertisingPeer()
+    init(probe: DiscoveryPreflighting) {
+        self.probe = probe
+        super.init()
     }
 
-    func browse() {
+    func host() { startDiscovery(hosting: true) }
+    func browse() { startDiscovery(hosting: false) }
+
+    private func startDiscovery(hosting: Bool) {
         stop()
-        hosting = false
-        prepareSession()
-        let browser = MCNearbyServiceBrowser(peer: localPeer, serviceType: Self.service)
-        self.browser = browser
-        browser.delegate = self
-        browser.startBrowsingForPeers()
+        self.hosting = hosting
+        let token = UUID()
+        discoveryID = token
+        probe.start { [weak self] result in
+            guard let self, self.discoveryID == token else { return }
+            switch result {
+            case .failure(let problem): self.onDiscoveryFailed?(problem)
+            case .success:
+                self.prepareSession()
+                if hosting {
+                    let advertiser = MCNearbyServiceAdvertiser(peer: self.localPeer,
+                        discoveryInfo: nil, serviceType: Self.service)
+                    self.advertiser = advertiser
+                    advertiser.delegate = self
+                    advertiser.startAdvertisingPeer()
+                } else {
+                    let browser = MCNearbyServiceBrowser(peer: self.localPeer,
+                                                         serviceType: Self.service)
+                    self.browser = browser
+                    browser.delegate = self
+                    browser.startBrowsingForPeers()
+                }
+            }
+        }
     }
 
     func join(_ peer: NearbyPeer) -> NearbyJoinResult {
@@ -220,6 +240,8 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     }
 
     func stop() {
+        discoveryID = nil
+        probe.cancel()
         advertiser?.stopAdvertisingPeer()
         advertiser?.delegate = nil
         advertiser = nil
@@ -288,7 +310,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser,
                                 didNotStartAdvertisingPeer error: Error) {
         let sdk = SDKReference(value: advertiser)
-        let reason = error.localizedDescription
+        let reason = DiscoveryFailure(operation: .hosting, error: error as NSError)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.advertiser,
                   current === sdk.value else { return }
@@ -326,7 +348,7 @@ final class NearbyTransport: NSObject, GameTransport, MCNearbyServiceAdvertiserD
     nonisolated func browser(_ browser: MCNearbyServiceBrowser,
                              didNotStartBrowsingForPeers error: Error) {
         let sdk = SDKReference(value: browser)
-        let reason = error.localizedDescription
+        let reason = DiscoveryFailure(operation: .browsing, error: error as NSError)
         DispatchQueue.main.async { [weak self] in
             guard let self, let current = self.browser,
                   current === sdk.value else { return }
